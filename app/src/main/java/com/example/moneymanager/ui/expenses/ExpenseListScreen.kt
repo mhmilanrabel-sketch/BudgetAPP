@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 package com.example.moneymanager.ui.expenses
 
 import androidx.compose.foundation.background

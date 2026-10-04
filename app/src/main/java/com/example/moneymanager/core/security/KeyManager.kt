@@ -20,41 +20,34 @@ object KeyManager {
 
     fun getOrCreateDatabasePassphrase(context: Context): ByteArray {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-
-        if (!keyStore.containsAlias(KEY_ALIAS)) {
-            generateKey()
-        }
-
+        if (!keyStore.containsAlias(KEY_ALIAS)) generateKey()
         val secretKey = keyStore.getKey(KEY_ALIAS, null) as? SecretKey
-            ?: throw IllegalStateException("Database key missing from Android Keystore")
-
+            ?: throw IllegalStateException("DB key missing from Keystore")
         return secretKey.encoded
     }
 
     private fun generateKey() {
         try {
-            val keyGenerator = KeyGenerator.getInstance(
+            val kg = KeyGenerator.getInstance(
                 KeyProperties.KEY_ALGORITHM_AES,
                 ANDROID_KEYSTORE
             )
-
-            val spec = KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            kg.init(
+                KeyGenParameterSpec.Builder(
+                    KEY_ALIAS,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                )
+                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .setKeySize(256)
+                    .setUserAuthenticationRequired(false)
+                    .build()
             )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .setUserAuthenticationRequired(false)
-                .build()
-
-            keyGenerator.init(spec)
-            keyGenerator.generateKey()
-
-            Log.i(TAG, "Generated new hardware-backed AES-256 database key.")
+            kg.generateKey()
+            Log.i(TAG, "Generated AES-256 DB key.")
         } catch (t: Throwable) {
-            Log.e(TAG, "Failed to generate database key", t)
-            throw IllegalStateException("Could not create database encryption key", t)
+            Log.e(TAG, "Failed to generate DB key", t)
+            throw IllegalStateException("Could not create DB encryption key", t)
         }
     }
 }
