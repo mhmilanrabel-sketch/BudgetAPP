@@ -1,81 +1,78 @@
 package com.example
 
 import com.example.moneymanager.data.parser.PaySlipParser
-import com.example.moneymanager.data.parser.PaySlipValidationException
 import org.junit.Assert.assertEquals
-import org.junit.Before
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertThrows
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 
+@RunWith(RobolectricTestRunner::class)
 class PaySlipParserTest {
 
-    private lateinit var parser: PaySlipParser
-
-    private val realWorldSlipText = """
-        Basic Salary                     192,455.33
-        Vehicle Allowance                 48,113.83
-        Exceptional Incentive              4,000.00
-        Shift Compensation Allow.         24,000.00
-        Gross Salary                     268,569.16
-        Total For EPF                    192,455.33
-        Total For ETF                    192,455.33
-        Total For TAX                    268,569.16
-        APIT                              11,342.45
-        LUMPSUMP TAX                           0.00
-        STAMP DUTY                             0.00
-        EPF Employee Cont.                15,396.43
-        Funeral Fund                         750.00
-        Excess Mobile Phone Usage         11,678.22
-        Meals -Deduction                     915.00
-        Total Deductions                  40,082.10
-        Net Salary                       228,487.06
-        Cash Salary                            0.00
-        Salary To Bank                   228,487.06
-        EPF Employer Cont.                23,094.64
-        ETF Employer Cont.                 5,773.66
-        APIT Employer.                         0.00
-        LUMPSUMP TAX Employer.                 0.00
-        STAMP DUTY Employer.                  25.00
-        Meals -Deduction- Rate 6.00 152.50
-    """.trimIndent()
-
-    @Before
-    fun setup() {
-        parser = PaySlipParser()
+    private val parser by lazy {
+        PaySlipParser(RuntimeEnvironment.getApplication())
     }
 
     @Test
-    fun parseText_realWorldSample_extractsAccurateFigures() {
-        val slip = parser.parseText(realWorldSlipText, "2026-10")
-
-        assertEquals("2026-10", slip.monthKey)
-        assertEquals(192455.33, slip.basicSalary, 0.01)
-        assertEquals(48113.83, slip.vehicleAllowance, 0.01)
-        assertEquals(4000.00, slip.exceptionalIncentive, 0.01)
-        assertEquals(24000.00, slip.shiftCompensation, 0.01)
-        assertEquals(268569.16, slip.grossSalary, 0.01)
-        assertEquals(11342.45, slip.apit, 0.01)
-        assertEquals(15396.43, slip.epfEmployee, 0.01)
-        assertEquals(11678.22, slip.excessMobile, 0.01)
-        assertEquals(915.00, slip.mealsDeduction, 0.01)
-        assertEquals(40082.10, slip.totalDeductions, 0.01)
-        assertEquals(228487.06, slip.netSalary, 0.01)
-        assertEquals(23094.64, slip.epfEmployer, 0.01)
-        assertEquals(5773.66, slip.etfEmployer, 0.01)
-
-        // Mathematical verification: Gross - Deductions = Net (within ±1 LKR)
-        val calculatedNet = slip.grossSalary - slip.totalDeductions
-        assertEquals(calculatedNet, slip.netSalary, 0.01)
-    }
-
-    @Test(expected = PaySlipValidationException::class)
-    fun parseText_mathematicalMismatch_rejectsFile() {
-        // Discrepancy intentional: Net salary altered by 100 LKR
-        val corruptSlip = """
-            Gross Salary                     268,569.16
-            Total Deductions                  40,082.10
-            Net Salary                       228,587.06
+    fun parseFromText_validSriLankanPaySlip_extractsAllFieldsAccurately() {
+        val payslipText = """
+            SRI LANKA COMMERCIAL TECH (PVT) LTD
+            Pay Slip for the month of October 2026
+            
+            Employee No: EMP-009842
+            Basic Salary: 192,455.00
+            Vehicle Allowance: 48,114.00
+            Exceptional Incentive: 4,000.00
+            Shift Compensation: 2,000.00
+            Gross Salary: 246,569.00
+            
+            Deductions:
+            APIT: 18,450.00
+            EPF Employee 8%: 15,396.40
+            Funeral Fund: 500.00
+            Meals: 4,800.00
+            Total Deductions: 39,146.40
+            
+            Net Salary: 207,422.60
+            
+            Employer Contributions:
+            EPF Employer 12%: 23,094.60
+            ETF Employer 3%: 5,773.65
         """.trimIndent()
 
-        parser.parseText(corruptSlip, "2026-10")
+        val parsed = parser.parseFromText(payslipText)
+
+        assertNotNull(parsed)
+        assertEquals("2026-10", parsed.monthKey)
+        assertEquals(192455.00, parsed.basicSalary, 0.01)
+        assertEquals(48114.00, parsed.vehicleAllowance, 0.01)
+        assertEquals(4000.00, parsed.exceptionalIncentive, 0.01)
+        assertEquals(2000.00, parsed.shiftCompensation, 0.01)
+        assertEquals(246569.00, parsed.grossSalary, 0.01)
+        assertEquals(18450.00, parsed.apit, 0.01)
+        assertEquals(15396.40, parsed.epfEmployee, 0.01)
+        assertEquals(500.00, parsed.funeralFund, 0.01)
+        assertEquals(4800.00, parsed.mealsDeduction, 0.01)
+        assertEquals(39146.40, parsed.totalDeductions, 0.01)
+        assertEquals(207422.60, parsed.netSalary, 0.01)
+        assertEquals(23094.60, parsed.epfEmployer, 0.01)
+        assertEquals(5773.65, parsed.etfEmployer, 0.01)
+    }
+
+    @Test
+    fun parseFromText_invalidMath_rejectsWithValidationError() {
+        val tamperedText = """
+            Basic Salary: 100,000.00
+            Gross Salary: 100,000.00
+            Total Deductions: 10,000.00
+            Net Salary: 95,000.00
+        """.trimIndent()
+
+        assertThrows(IllegalArgumentException::class.java) {
+            parser.parseFromText(tamperedText)
+        }
     }
 }

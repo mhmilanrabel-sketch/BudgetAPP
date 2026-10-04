@@ -15,31 +15,21 @@ class OcrFallbackParser(
     private val paySlipParser: PaySlipParser
 ) {
 
-    /**
-     * Performs on-device ML Kit OCR on a scanned Salary Slip bitmap.
-     * 100% offline, zero network requests.
-     */
-    suspend fun recognizeAndParseBitmap(
-        bitmap: Bitmap,
-        targetMonthKey: String? = null
-    ): ParsedSalarySlip {
-        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        val image = InputImage.fromBitmap(bitmap, 0)
+    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
-        val ocrText = suspendCancellableCoroutine<String> { continuation ->
-            recognizer.process(image)
-                .addOnSuccessListener { visionText ->
-                    continuation.resume(visionText.text)
-                }
-                .addOnFailureListener { e ->
+    suspend fun recognizeAndParse(bitmap: Bitmap): ParsedSalarySlip = suspendCancellableCoroutine { continuation ->
+        val image = InputImage.fromBitmap(bitmap, 0)
+        recognizer.process(image)
+            .addOnSuccessListener { visionText ->
+                try {
+                    val slip = paySlipParser.parseFromText(visionText.text, isOcr = true)
+                    continuation.resume(slip)
+                } catch (e: Exception) {
                     continuation.resumeWithException(e)
                 }
-        }
-
-        if (ocrText.isBlank()) {
-            throw IllegalArgumentException("OCR completed but could not detect readable text on image.")
-        }
-
-        return paySlipParser.parseText(ocrText, targetMonthKey)
+            }
+            .addOnFailureListener { exception ->
+                continuation.resumeWithException(exception)
+            }
     }
 }

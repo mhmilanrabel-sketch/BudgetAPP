@@ -1,4 +1,4 @@
-package com.example.core.security
+package com.example.moneymanager.core.security
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec

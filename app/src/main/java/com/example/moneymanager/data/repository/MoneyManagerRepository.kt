@@ -10,6 +10,7 @@ import com.example.moneymanager.domain.model.ReconciliationResult
 import kotlinx.coroutines.flow.Flow
 
 interface MoneyManagerRepository {
+
     fun getAllMonths(): Flow<List<BudgetMonth>>
     fun getBudgetMonth(monthKey: String): Flow<BudgetMonth?>
     fun getSalaryRecord(monthKey: String): Flow<SalaryRecord?>
@@ -18,7 +19,7 @@ interface MoneyManagerRepository {
 
     suspend fun saveSalarySlip(slip: ParsedSalarySlip): ReconciliationResult
     suspend fun saveBudgetSheet(sheet: ParsedBudgetSheet): ReconciliationResult
-    suspend fun toggleExpenseMandatory(id: Long, isMandatory: Boolean, monthKey: String): ReconciliationResult
+    suspend fun updateExpenseCategory(expenseId: Long, isMandatory: Boolean, category: String, monthKey: String): ReconciliationResult
+    suspend fun reconcile(monthKey: String): ReconciliationResult
     suspend fun deleteMonthData(monthKey: String)
-    suspend fun recalculateReconciliation(monthKey: String): ReconciliationResult
 }

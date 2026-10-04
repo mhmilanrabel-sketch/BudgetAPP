@@ -1,18 +1,28 @@
 package com.example.moneymanager.domain.model
 
+data class Discrepancy(
+    val title: String,
+    val description: String,
+    val severity: DiscrepancySeverity
+)
+
+enum class DiscrepancySeverity {
+    WARNING,
+    ERROR,
+    INFO
+}
+
 data class ReconciliationResult(
     val monthKey: String,
-    val netSalary: Double,
     val openingBalance: Double,
-    val mandatoryExpenses: Double,
-    val optionalExpenses: Double,
+    val netSalary: Double,
     val totalRealPay: Double,
+    val totalNotPaid: Double,
+    val mandatoryRealPay: Double,
+    val optionalRealPay: Double,
     val closingBalance: Double,
     val savingsTarget: Double,
-    val warnings: List<String>,
     val isOverspent: Boolean,
-    val isSavingsTargetMet: Boolean,
-    val hasCarryForwardUnpaid: Boolean,
-    val salaryDiscrepancy: Double? = null,
-    val netSalaryMatchesHandSave: Boolean = true
+    val overspentAmount: Double,
+    val discrepancies: List<Discrepancy>
 )

@@ -1,52 +1,40 @@
-package com.example
+package com.example.moneymanager
 
 import android.app.Application
 import android.util.Log
+import com.example.moneymanager.di.AppContainer
+import com.example.moneymanager.di.DefaultAppContainer
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import net.sqlcipher.database.SQLiteDatabase
 
-/**
- * Application entry point — manual DI, no Hilt.
- * AppDatabase and MoneyRepository singletons self-manage their lifetimes.
- */
 class MoneyManagerApplication : Application() {
 
-    companion object {
-        private const val TAG = "MoneyManagerApp"
-
-        private const val POI_XML_INPUT_FACTORY  = "org.apache.poi.javax.xml.stream.XMLInputFactory"
-        private const val POI_XML_OUTPUT_FACTORY = "org.apache.poi.javax.xml.stream.XMLOutputFactory"
-        private const val POI_XML_EVENT_FACTORY  = "org.apache.poi.javax.xml.stream.XMLEventFactory"
-
-        private const val AALTO_INPUT_FACTORY  = "com.fasterxml.aalto.stax.InputFactoryImpl"
-        private const val AALTO_OUTPUT_FACTORY = "com.fasterxml.aalto.stax.OutputFactoryImpl"
-        private const val AALTO_EVENT_FACTORY  = "com.fasterxml.aalto.stax.EventFactoryImpl"
-    }
+    lateinit var container: AppContainer
+        private set
 
     override fun onCreate() {
         super.onCreate()
-        initSqlCipher()
-        configurePoiSystemProperties()
-    }
 
-    private fun initSqlCipher() {
+        // 1. Initialize Apache POI XML StAX Factories for Android compatibility
         try {
-            // Old net.zetetic:android-database-sqlcipher (4.5.4) uses this API.
+            System.setProperty("org.apache.poi.javax.xml.stream.XMLInputFactory", "com.fasterxml.aalto.stax.InputFactoryImpl")
+            System.setProperty("org.apache.poi.javax.xml.stream.XMLOutputFactory", "com.fasterxml.aalto.stax.OutputFactoryImpl")
+            System.setProperty("org.apache.poi.javax.xml.stream.XMLEventFactory", "com.fasterxml.aalto.stax.EventFactoryImpl")
+        } catch (t: Throwable) {
+            Log.e("MoneyManagerApp", "Failed to set POI system properties", t)
+        }
+
+        // 2. Initialize SQLCipher native library
+        try {
             SQLiteDatabase.loadLibs(this)
-            Log.i(TAG, "SQLCipher native library loaded.")
         } catch (t: Throwable) {
-            Log.e(TAG, "Failed to load SQLCipher native library", t)
-            throw IllegalStateException("SQLCipher could not be initialised.", t)
+            Log.e("MoneyManagerApp", "Failed to load SQLCipher libs", t)
         }
-    }
 
-    private fun configurePoiSystemProperties() {
-        try {
-            System.setProperty(POI_XML_INPUT_FACTORY,  AALTO_INPUT_FACTORY)
-            System.setProperty(POI_XML_OUTPUT_FACTORY, AALTO_OUTPUT_FACTORY)
-            System.setProperty(POI_XML_EVENT_FACTORY,  AALTO_EVENT_FACTORY)
-            Log.i(TAG, "Apache POI system properties configured.")
-        } catch (t: Throwable) {
-            Log.e(TAG, "Failed to configure POI system properties", t)
-        }
+        // 3. Initialize PDFBox Android resource loader
+        PDFBoxResourceLoader.init(applicationContext)
+
+        // 4. Initialize Dependency Container
+        container = DefaultAppContainer(this)
     }
 }

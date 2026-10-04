@@ -45,7 +45,6 @@ class BiometricAuthManager(private val context: Context) {
 
                 override fun onAuthenticationFailed() {
                     super.onAuthenticationFailed()
-                    // Fingerprint not recognized, prompt remains open
                 }
             }
         )

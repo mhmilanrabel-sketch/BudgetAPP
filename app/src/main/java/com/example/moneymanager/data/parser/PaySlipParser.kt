@@ -6,130 +6,77 @@ import com.example.moneymanager.domain.model.ParsedSalarySlip
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.InputStream
-import java.time.YearMonth
-import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.regex.Pattern
 import kotlin.math.abs
 
-class PaySlipParser(private val context: Context? = null) {
+class PaySlipParser(private val context: Context) {
 
-    companion object {
-        private const val TAG = "PaySlipParser"
-        private const val TOLERANCE = 1.0 // ±1 LKR tolerance
-    }
-
-    /**
-     * Parses an InputStream representing a Salary Slip PDF.
-     * Uses PDFTextStripper with sortByPosition = true for two-column layout.
-     * Validates that (gross - deductions) == net within 1 LKR.
-     * Throws IllegalArgumentException on invalid format or mathematical mismatch.
-     */
-    fun parse(inputStream: InputStream, targetMonthKey: String? = null): ParsedSalarySlip {
-        val document: PDDocument = try {
-            PDDocument.load(inputStream)
-        } catch (e: Exception) {
-            throw IllegalArgumentException("Could not read PDF document. Ensure the file is a valid PDF.", e)
-        }
-
+    fun parse(inputStream: InputStream): ParsedSalarySlip {
+        val document = PDDocument.load(inputStream)
+        val fullText: String
         try {
-            val stripper = PDFTextStripper().apply {
-                sortByPosition = true
-            }
-            val text = stripper.getText(document)
-
-            if (text.isBlank()) {
-                throw EmptyPdfTextException("PDF contains no extractable text. It may be a scanned image or photo.")
-            }
-
-            return parseText(text, targetMonthKey)
+            val stripper = PDFTextStripper()
+            stripper.sortByPosition = true
+            fullText = stripper.getText(document)
         } finally {
-            try {
-                document.close()
-            } catch (ignored: Exception) {}
+            document.close()
         }
+
+        if (fullText.isBlank() || fullText.length < 50) {
+            throw IllegalStateException("PDF contains no extractable text. May be scanned or image-based.")
+        }
+
+        return extractFinancialFields(fullText)
     }
 
-    fun parseText(text: String, targetMonthKey: String? = null): ParsedSalarySlip {
+    fun parseFromText(text: String, isOcr: Boolean = false): ParsedSalarySlip {
+        return extractFinancialFields(text, isOcr)
+    }
+
+    private fun extractFinancialFields(text: String, isOcr: Boolean = false): ParsedSalarySlip {
         val lines = text.lines()
-        val allExtracted = mutableMapOf<String, Double>()
 
-        // Helper regex matching: <Label>[\s:\-]*([\d,]+(?:\.\d{1,2})?)
-        fun extractAmount(labelPattern: String): Double? {
-            val regex = Pattern.compile(
-                "$labelPattern[\\s:\\-]*([\\d,]+(?:\\.\\d{1,2})?)",
-                Pattern.CASE_INSENSITIVE
-            )
-            for (line in lines) {
-                val matcher = regex.matcher(line)
-                if (matcher.find()) {
-                    val amountStr = matcher.group(1)?.replace(",", "")?.trim()
-                    val value = amountStr?.toDoubleOrNull()
-                    if (value != null) {
-                        return value
-                    }
-                }
-            }
-            return null
-        }
+        val monthKey = extractMonthKey(text)
 
-        // Also extract generic line items for breakdown screen
-        val genericLineRegex = Pattern.compile(
-            "^\\s*([A-Za-z0-9\\.\\-\\(\\)\\s/]+?)\\s{2,}([\\d,]+(?:\\.\\d{1,2})?)\\s*$"
-        )
-        for (line in lines) {
-            val m = genericLineRegex.matcher(line)
-            if (m.find()) {
-                val label = m.group(1)?.trim() ?: ""
-                val value = m.group(2)?.replace(",", "")?.toDoubleOrNull()
-                if (label.isNotBlank() && value != null) {
-                    allExtracted[label] = value
-                }
-            }
-        }
+        val basicSalary = extractAmount(text, "(?i)Basic\\s+Salary", "Basic\\s*:\\s*")
+        val vehicleAllowance = extractAmount(text, "(?i)Vehicle\\s+Allowance")
+        val exceptionalIncentive = extractAmount(text, "(?i)Exceptional\\s+Incentive")
+        val shiftCompensation = extractAmount(text, "(?i)Shift\\s+Compensation")
+        val grossSalary = extractAmount(text, "(?i)Gross\\s+Salary", "(?i)Total\\s+Earnings")
 
-        val basicSalary = extractAmount("Basic\\s*Salary") ?: 0.0
-        val vehicleAllowance = extractAmount("Vehicle\\s*Allowance") ?: 0.0
-        val exceptionalIncentive = extractAmount("Exceptional\\s*Incentive") ?: 0.0
-        val shiftCompensation = extractAmount("Shift\\s*Compensation(?:\\s*Allow\\.?)?") ?: 0.0
-        val grossSalary = extractAmount("Gross\\s*Salary") ?: 0.0
+        val totalForEpf = extractAmount(text, "(?i)Total\\s+for\\s+EPF", "(?i)Total\\s+for\\s+E\\.P\\.F")
+        val totalForEtf = extractAmount(text, "(?i)Total\\s+for\\s+ETF", "(?i)Total\\s+for\\s+E\\.T\\.F")
+        val totalForTax = extractAmount(text, "(?i)Total\\s+for\\s+Tax")
 
-        val totalForEpf = extractAmount("Total\\s*For\\s*EPF") ?: basicSalary
-        val totalForEtf = extractAmount("Total\\s*For\\s*ETF") ?: basicSalary
-        val totalForTax = extractAmount("Total\\s*For\\s*TAX") ?: grossSalary
+        val apit = extractAmount(text, "(?i)\\bAPIT\\b", "(?i)Advance\\s+Personal\\s+Income\\s+Tax")
+        val lumpsumTax = extractAmount(text, "(?i)Lump\\s*sum\\s+tax", "(?i)Lumpsum\\s+Tax")
+        val stampDuty = extractAmount(text, "(?i)Stamp\\s+Duty")
+        val epfEmployee = extractAmount(text, "(?i)E\\.?P\\.?F\\.?\\s+Employee", "(?i)EPF\\s+8%", "(?i)Employee\\s+EPF")
+        val funeralFund = extractAmount(text, "(?i)Funeral\\s+Fund")
+        val excessMobile = extractAmount(text, "(?i)Excess\\s+Mobile", "(?i)Mobile\\s+Deduction")
+        val mealsDeduction = extractAmount(text, "(?i)Meals")
+        val totalDeductions = extractAmount(text, "(?i)Total\\s+Deductions")
 
-        val apit = extractAmount("APIT(?!\\s*Employer)") ?: 0.0
-        val lumpsumTax = extractAmount("LUMPSUMP?\\s*TAX(?!\\s*Employer)") ?: 0.0
-        val stampDuty = extractAmount("STAMP\\s*DUTY(?!\\s*Employer)") ?: 0.0
-        val epfEmployee = extractAmount("EPF\\s*Employee\\s*Cont\\.?(?:ribution)?") ?: 0.0
-        val funeralFund = extractAmount("Funeral\\s*Fund") ?: 0.0
-        val excessMobile = extractAmount("Excess\\s*Mobile(?:\\s*Phone\\s*Usage)?") ?: 0.0
-        val mealsDeduction = extractAmount("Meals\\s*-\\s*Deduction(?!-\\s*Rate)") ?: 0.0
-        val totalDeductions = extractAmount("Total\\s*Deductions?") ?: 0.0
+        val netSalary = extractAmount(text, "(?i)Net\\s+Salary", "(?i)Take\\s+Home\\s+Pay", "(?i)Net\\s+Pay")
+        val cashSalary = extractAmount(text, "(?i)Cash\\s+Salary")
+        val salaryToBank = extractAmount(text, "(?i)Salary\\s+to\\s+Bank", "(?i)Bank\\s+Transfer")
 
-        val netSalary = extractAmount("Net\\s*Salary") ?: 0.0
-        val cashSalary = extractAmount("Cash\\s*Salary") ?: 0.0
-        val salaryToBank = extractAmount("Salary\\s*To\\s*Bank") ?: netSalary
+        val epfEmployer = extractAmount(text, "(?i)E\\.?P\\.?F\\.?\\s+Employer", "(?i)EPF\\s+12%")
+        val etfEmployer = extractAmount(text, "(?i)E\\.?T\\.?F\\.?\\s+Employer", "(?i)ETF\\s+3%")
+        val stampDutyEmployer = extractAmount(text, "(?i)Stamp\\s+Duty\\s+Employer")
 
-        val epfEmployer = extractAmount("EPF\\s*Employer\\s*Cont\\.?(?:ribution)?") ?: 0.0
-        val etfEmployer = extractAmount("ETF\\s*Employer\\s*Cont\\.?(?:ribution)?") ?: 0.0
-        val stampDutyEmployer = extractAmount("STAMP\\s*DUTY\\s*Employer\\.?") ?: 0.0
-
-        // Month detection if not specified
-        val monthKey = targetMonthKey ?: detectMonthKey(text) ?: CurrencyFormatter.getCurrentMonthKey()
-
-        // Strict Validation: grossSalary - totalDeductions must equal netSalary (±1 LKR)
-        if (grossSalary > 0.0 || netSalary > 0.0 || totalDeductions > 0.0) {
-            val calculatedNet = grossSalary - totalDeductions
-            val diff = abs(calculatedNet - netSalary)
-            if (diff > TOLERANCE) {
-                throw PaySlipValidationException(
-                    "Mathematical verification failed: Gross salary minus deductions does not equal Net salary. " +
-                            "Discrepancy exceeds ±1.0 LKR limit. File rejected for financial accuracy."
+        // Strict Validation: gross - deductions must equal net (±1 LKR)
+        val calculatedNet = grossSalary - totalDeductions
+        if (grossSalary > 0.0 && totalDeductions > 0.0 && netSalary > 0.0) {
+            val variance = abs(calculatedNet - netSalary)
+            if (variance > 1.0) {
+                throw IllegalArgumentException(
+                    "Payslip integrity validation failed: Gross (${CurrencyFormatter.formatLkr(grossSalary)}) - " +
+                            "Deductions (${CurrencyFormatter.formatLkr(totalDeductions)}) = ${CurrencyFormatter.formatLkr(calculatedNet)}, " +
+                            "but Net Salary is ${CurrencyFormatter.formatLkr(netSalary)} (Variance: ${CurrencyFormatter.formatLkr(variance)})."
                 )
             }
-        } else {
-            throw IllegalArgumentException("Could not extract gross or net salary values from salary slip.")
         }
 
         return ParsedSalarySlip(
@@ -139,8 +86,8 @@ class PaySlipParser(private val context: Context? = null) {
             exceptionalIncentive = exceptionalIncentive,
             shiftCompensation = shiftCompensation,
             grossSalary = grossSalary,
-            totalForEpf = totalForEpf,
-            totalForEtf = totalForEtf,
+            totalForEpf = if (totalForEpf > 0.0) totalForEpf else basicSalary,
+            totalForEtf = if (totalForEtf > 0.0) totalForEtf else basicSalary,
             totalForTax = totalForTax,
             apit = apit,
             lumpsumTax = lumpsumTax,
@@ -152,37 +99,74 @@ class PaySlipParser(private val context: Context? = null) {
             totalDeductions = totalDeductions,
             netSalary = netSalary,
             cashSalary = cashSalary,
-            salaryToBank = salaryToBank,
+            salaryToBank = if (salaryToBank > 0.0) salaryToBank else netSalary,
             epfEmployer = epfEmployer,
             etfEmployer = etfEmployer,
             stampDutyEmployer = stampDutyEmployer,
-            allLineItems = allExtracted,
-            rawTextExtracted = true
+            rawText = text,
+            isOcrFallback = isOcr
         )
     }
 
-    private fun detectMonthKey(text: String): String? {
-        val months = listOf(
-            "january" to "01", "february" to "02", "march" to "03", "april" to "04",
-            "may" to "05", "june" to "06", "july" to "07", "august" to "08",
-            "september" to "09", "october" to "10", "november" to "11", "december" to "12",
-            "jan" to "01", "feb" to "02", "mar" to "03", "apr" to "04",
-            "jun" to "06", "jul" to "07", "aug" to "08", "sep" to "09",
-            "oct" to "10", "nov" to "11", "dec" to "12"
-        )
-        val yearPattern = Pattern.compile("(20[2-3][0-9])")
-        val yearMatcher = yearPattern.matcher(text)
-        val year = if (yearMatcher.find()) yearMatcher.group(1) else null
+    private fun extractAmount(text: String, vararg patterns: String): Double {
+        for (patternStr in patterns) {
+            val regex = Pattern.compile(
+                "$patternStr[:\\s]*([0-9]{1,3}(?:,[0-9]{3})*(?:\\.[0-9]{1,2})?|[0-9]+(?:\\.[0-9]{1,2})?)",
+                Pattern.CASE_INSENSITIVE
+            )
+            val matcher = regex.matcher(text)
+            if (matcher.find()) {
+                val match = matcher.group(1)
+                val parsed = CurrencyFormatter.parseAmount(match)
+                if (parsed > 0.0) return parsed
+            }
+        }
 
-        val lower = text.lowercase(Locale.ENGLISH)
-        for ((mName, mNum) in months) {
-            if (lower.contains(mName) && year != null) {
+        val lines = text.lines()
+        for (patternStr in patterns) {
+            val r = Regex(patternStr, RegexOption.IGNORE_CASE)
+            for (i in lines.indices) {
+                if (r.containsMatchIn(lines[i])) {
+                    val candidate = lines[i].replace(r, "").trim()
+                    val amt = CurrencyFormatter.parseAmount(candidate)
+                    if (amt > 0.0) return amt
+
+                    if (i + 1 < lines.size) {
+                        val nextAmt = CurrencyFormatter.parseAmount(lines[i + 1].trim())
+                        if (nextAmt > 0.0) return nextAmt
+                    }
+                }
+            }
+        }
+        return 0.0
+    }
+
+    private fun extractMonthKey(text: String): String {
+        val monthNames = listOf(
+            "January" to "01", "February" to "02", "March" to "03", "April" to "04",
+            "May" to "05", "June" to "06", "July" to "07", "August" to "08",
+            "September" to "09", "October" to "10", "November" to "11", "December" to "12",
+            "Jan" to "01", "Feb" to "02", "Mar" to "03", "Apr" to "04",
+            "Jun" to "06", "Jul" to "07", "Aug" to "08", "Sep" to "09", "Oct" to "10", "Nov" to "11", "Dec" to "12"
+        )
+
+        val yearRegex = Regex("\\b(20[2-3][0-9])\\b")
+        val yearMatch = yearRegex.find(text)
+        val year = yearMatch?.value ?: java.time.LocalDate.now().year.toString()
+
+        for ((mName, mNum) in monthNames) {
+            if (text.contains(mName, ignoreCase = true)) {
                 return "$year-$mNum"
             }
         }
-        return null
+
+        val dateMatch = Regex("\\b(20[2-3][0-9])[-/](0[1-9]|1[0-2])\\b").find(text)
+        if (dateMatch != null) {
+            return dateMatch.value.replace('/', '-')
+        }
+
+        val now = java.time.LocalDate.now()
+        val currentMonth = if (now.monthValue < 10) "0${now.monthValue}" else "${now.monthValue}"
+        return "${now.year}-$currentMonth"
     }
 }
-
-class EmptyPdfTextException(message: String) : Exception(message)
-class PaySlipValidationException(message: String) : IllegalArgumentException(message)

@@ -61,163 +61,110 @@ class MoneyManagerRepositoryImpl(
             epfEmployer = slip.epfEmployer,
             etfEmployer = slip.etfEmployer,
             stampDutyEmployer = slip.stampDutyEmployer,
-            importedAt = System.currentTimeMillis()
+            rawText = slip.rawText
         )
         salaryDao.insertOrUpdate(record)
 
-        val currentMonth = monthDao.getByMonthSync(slip.monthKey)
-        val updatedMonth = (currentMonth ?: BudgetMonth(monthKey = slip.monthKey)).copy(
+        val existingMonth = monthDao.getByMonthSync(slip.monthKey)
+        val updatedMonth = existingMonth?.copy(
             netSalaryFromPdf = slip.netSalary,
             hasPdfImported = true,
             updatedAt = System.currentTimeMillis()
+        ) ?: BudgetMonth(
+            monthKey = slip.monthKey,
+            netSalaryFromPdf = slip.netSalary,
+            hasPdfImported = true
         )
         monthDao.insertOrUpdate(updatedMonth)
 
-        recalculateReconciliation(slip.monthKey)
+        reconcile(slip.monthKey)
     }
 
     override suspend fun saveBudgetSheet(sheet: ParsedBudgetSheet): ReconciliationResult = withContext(Dispatchers.IO) {
-        // Delete previous expenses for this month to prevent duplication on re-import
+        // Replace existing expense lines for month
         expenseDao.deleteForMonth(sheet.monthKey)
-
-        val expenseEntities = sheet.expenses.map { item ->
+        val entities = sheet.expenseItems.map { item ->
             ExpenseLine(
                 monthKey = sheet.monthKey,
-                itemName = item.name,
+                itemName = item.itemName,
                 budgetAmount = item.amount,
                 notPaidAmount = item.notPay,
-                realPayAmount = item.realPay,
+                realPayAmount = item.totalRealPay,
                 isMandatory = item.isMandatory,
-                category = if (item.isMandatory) "Mandatory" else "Optional"
+                category = item.category
             )
         }
-        expenseDao.insertAll(expenseEntities)
+        expenseDao.insertAll(entities)
 
-        val currentMonth = monthDao.getByMonthSync(sheet.monthKey)
-        val basicSalaryInSheet = sheet.salaryBreakdown["Basic Salary"] ?: 0.0
-        val salBalance = sheet.salaryBreakdown["Sal"] ?: 0.0
+        val existingMonth = monthDao.getByMonthSync(sheet.monthKey)
+        val mandatoryRealPay = sheet.expenseItems.filter { it.isMandatory }.sumOf { it.totalRealPay }
+        val optionalRealPay = sheet.expenseItems.filter { !it.isMandatory }.sumOf { it.totalRealPay }
 
-        val updatedMonth = (currentMonth ?: BudgetMonth(monthKey = sheet.monthKey)).copy(
+        val updatedMonth = (existingMonth ?: BudgetMonth(monthKey = sheet.monthKey)).copy(
             openingBankBalance = sheet.openingBankBalance,
-            totalMandatoryRealPay = sheet.expenses.filter { it.isMandatory }.sumOf { it.realPay },
-            totalOptionalRealPay = sheet.expenses.filter { !it.isMandatory }.sumOf { it.realPay },
+            totalMandatoryRealPay = mandatoryRealPay,
+            totalOptionalRealPay = optionalRealPay,
             totalRealPay = sheet.totalRealPay,
             totalNotPaid = sheet.totalNotPaid,
-            savingsTarget = sheet.savingAllocation,
-            sheetBasicSalary = basicSalaryInSheet,
-            sheetSalBalance = salBalance,
+            savingsTarget = sheet.savingsTarget,
+            sheetBasicSalary = sheet.basicSalary,
+            sheetSalBalance = sheet.salBalance,
             sheetHandSave = sheet.handSave,
             hasSheetImported = true,
             updatedAt = System.currentTimeMillis()
         )
         monthDao.insertOrUpdate(updatedMonth)
 
-        recalculateReconciliation(sheet.monthKey)
+        reconcile(sheet.monthKey)
     }
 
-    override suspend fun toggleExpenseMandatory(id: Long, isMandatory: Boolean, monthKey: String): ReconciliationResult =
-        withContext(Dispatchers.IO) {
-            val category = if (isMandatory) "Mandatory" else "Optional"
-            expenseDao.updateCategory(id, isMandatory, category)
-            recalculateReconciliation(monthKey)
+    override suspend fun updateExpenseCategory(
+        expenseId: Long,
+        isMandatory: Boolean,
+        category: String,
+        monthKey: String
+    ): ReconciliationResult = withContext(Dispatchers.IO) {
+        expenseDao.updateCategory(expenseId, isMandatory, category)
+        reconcile(monthKey)
+    }
+
+    override suspend fun reconcile(monthKey: String): ReconciliationResult = withContext(Dispatchers.IO) {
+        val salaryRecord = salaryDao.getByMonthSync(monthKey)
+        val budgetMonth = monthDao.getByMonthSync(monthKey)
+        val expenses = expenseDao.getExpensesForMonthSync(monthKey)
+
+        val result = reconcileUseCase.execute(monthKey, salaryRecord, budgetMonth, expenses)
+
+        // Update budget month totals & closing balance
+        budgetMonth?.let {
+            val updated = it.copy(
+                closingBalance = result.closingBalance,
+                totalMandatoryRealPay = result.mandatoryRealPay,
+                totalOptionalRealPay = result.optionalRealPay,
+                totalRealPay = result.totalRealPay,
+                totalNotPaid = result.totalNotPaid,
+                updatedAt = System.currentTimeMillis()
+            )
+            monthDao.insertOrUpdate(updated)
         }
+
+        // Cache summary warnings
+        val warningsText = result.discrepancies.joinToString("\n") { "[${it.severity}] ${it.title}: ${it.description}" }
+        summaryDao.insertOrUpdate(
+            MonthlySummary(
+                monthKey = monthKey,
+                warningsText = warningsText,
+                notes = if (result.isOverspent) "⚠️ OVERSPENT BY ${result.overspentAmount}" else "Reconciled OK"
+            )
+        )
+
+        result
+    }
 
     override suspend fun deleteMonthData(monthKey: String) = withContext(Dispatchers.IO) {
         salaryDao.deleteForMonth(monthKey)
         expenseDao.deleteForMonth(monthKey)
         summaryDao.deleteForMonth(monthKey)
         monthDao.deleteMonth(monthKey)
-    }
-
-    override suspend fun recalculateReconciliation(monthKey: String): ReconciliationResult = withContext(Dispatchers.IO) {
-        val salaryRecord = salaryDao.getByMonthSync(monthKey)
-        val expenseLines = expenseDao.getExpensesForMonthSync(monthKey)
-        val budgetMonth = monthDao.getByMonthSync(monthKey)
-
-        val slip = salaryRecord?.let {
-            ParsedSalarySlip(
-                monthKey = it.monthKey,
-                basicSalary = it.basicSalary,
-                vehicleAllowance = it.vehicleAllowance,
-                exceptionalIncentive = it.exceptionalIncentive,
-                shiftCompensation = it.shiftCompensation,
-                grossSalary = it.grossSalary,
-                totalForEpf = it.totalForEpf,
-                totalForEtf = it.totalForEtf,
-                totalForTax = it.totalForTax,
-                apit = it.apit,
-                lumpsumTax = it.lumpsumTax,
-                stampDuty = it.stampDuty,
-                epfEmployee = it.epfEmployee,
-                funeralFund = it.funeralFund,
-                excessMobile = it.excessMobile,
-                mealsDeduction = it.mealsDeduction,
-                totalDeductions = it.totalDeductions,
-                netSalary = it.netSalary,
-                cashSalary = it.cashSalary,
-                salaryToBank = it.salaryToBank,
-                epfEmployer = it.epfEmployer,
-                etfEmployer = it.etfEmployer,
-                stampDutyEmployer = it.stampDutyEmployer
-            )
-        }
-
-        val sheet = budgetMonth?.let { bm ->
-            val expenseItems = expenseLines.map { el ->
-                BudgetExpenseItem(
-                    name = el.itemName,
-                    amount = el.budgetAmount,
-                    notPay = el.notPaidAmount,
-                    realPay = el.realPayAmount,
-                    isMandatory = el.isMandatory
-                )
-            }
-            val breakdown = mutableMapOf<String, Double>()
-            if (bm.sheetBasicSalary > 0.0) breakdown["Basic Salary"] = bm.sheetBasicSalary
-            if (bm.sheetSalBalance > 0.0) breakdown["Sal"] = bm.sheetSalBalance
-            if (bm.sheetHandSave > 0.0) breakdown["Hand Save"] = bm.sheetHandSave
-            if (bm.savingsTarget > 0.0) breakdown["Saving"] = bm.savingsTarget
-
-            ParsedBudgetSheet(
-                monthKey = bm.monthKey,
-                openingBankBalance = bm.openingBankBalance,
-                expenses = expenseItems,
-                salaryBreakdown = breakdown,
-                totalExpensesColB = expenseItems.sumOf { it.amount },
-                totalNotPaid = expenseItems.sumOf { it.notPay },
-                totalRealPay = expenseItems.sumOf { it.realPay },
-                savingAllocation = bm.savingsTarget,
-                handSave = bm.sheetHandSave,
-                rawRowCount = expenseItems.size
-            )
-        }
-
-        val result = reconcileUseCase.execute(slip, sheet, monthKey)
-
-        // Update BudgetMonth entity with recalculated values
-        if (budgetMonth != null) {
-            val updated = budgetMonth.copy(
-                openingBankBalance = result.openingBalance,
-                netSalaryFromPdf = result.netSalary,
-                totalMandatoryRealPay = result.mandatoryExpenses,
-                totalOptionalRealPay = result.optionalExpenses,
-                totalRealPay = result.totalRealPay,
-                closingBalance = result.closingBalance,
-                savingsTarget = result.savingsTarget,
-                updatedAt = System.currentTimeMillis()
-            )
-            monthDao.insertOrUpdate(updated)
-        }
-
-        // Store summary with warnings
-        val summary = MonthlySummary(
-            monthKey = monthKey,
-            warningsText = result.warnings.joinToString("\n"),
-            notes = if (result.isOverspent) "Budget overspent" else "Budget balanced",
-            updatedAt = System.currentTimeMillis()
-        )
-        summaryDao.insertOrUpdate(summary)
-
-        result
     }
 }

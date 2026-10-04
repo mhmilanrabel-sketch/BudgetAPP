@@ -12,18 +12,26 @@ import com.example.moneymanager.domain.usecase.ReconcileMonthlyFinancesUseCase
 
 interface AppContainer {
     val database: AppDatabase
+    val repository: MoneyManagerRepository
     val paySlipParser: PaySlipParser
     val budgetSheetParser: BudgetSheetParser
     val ocrFallbackParser: OcrFallbackParser
-    val reconcileUseCase: ReconcileMonthlyFinancesUseCase
-    val repository: MoneyManagerRepository
     val biometricAuthManager: BiometricAuthManager
+    val reconcileUseCase: ReconcileMonthlyFinancesUseCase
 }
 
 class DefaultAppContainer(private val context: Context) : AppContainer {
 
     override val database: AppDatabase by lazy {
         AppDatabase.getInstance(context)
+    }
+
+    override val reconcileUseCase: ReconcileMonthlyFinancesUseCase by lazy {
+        ReconcileMonthlyFinancesUseCase()
+    }
+
+    override val repository: MoneyManagerRepository by lazy {
+        MoneyManagerRepositoryImpl(database, reconcileUseCase)
     }
 
     override val paySlipParser: PaySlipParser by lazy {
@@ -36,14 +44,6 @@ class DefaultAppContainer(private val context: Context) : AppContainer {
 
     override val ocrFallbackParser: OcrFallbackParser by lazy {
         OcrFallbackParser(context, paySlipParser)
-    }
-
-    override val reconcileUseCase: ReconcileMonthlyFinancesUseCase by lazy {
-        ReconcileMonthlyFinancesUseCase()
-    }
-
-    override val repository: MoneyManagerRepository by lazy {
-        MoneyManagerRepositoryImpl(database, reconcileUseCase)
     }
 
     override val biometricAuthManager: BiometricAuthManager by lazy {

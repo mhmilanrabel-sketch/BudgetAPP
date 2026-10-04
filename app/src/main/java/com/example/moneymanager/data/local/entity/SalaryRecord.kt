@@ -1,35 +1,34 @@
-package com.example.data.local.entity
+package com.example.moneymanager.data.local.entity
 
 import androidx.room.Entity
-import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(
-    tableName = "salary_records",
-    indices = [Index(value = ["month"], unique = true)]
-)
+@Entity(tableName = "salary_records")
 data class SalaryRecord(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val month: String,
-    val basicSalary: Double,
-    val vehicleAllowance: Double,
-    val exceptionalIncentive: Double,
-    val shiftCompensation: Double,
-    val grossSalary: Double,
-    val totalForEpf: Double,
-    val totalForEtf: Double,
-    val totalForTax: Double,
-    val apit: Double,
-    val epfEmployee: Double,
-    val funeralFund: Double,
-    val excessMobile: Double,
-    val mealsDeduction: Double,
-    val totalDeductions: Double,
-    val netSalary: Double,
-    val cashSalary: Double,
-    val salaryToBank: Double,
-    val epfEmployer: Double,
-    val etfEmployer: Double,
+    @PrimaryKey
+    val monthKey: String, // e.g. "2026-10"
+    val basicSalary: Double = 0.0,
+    val vehicleAllowance: Double = 0.0,
+    val exceptionalIncentive: Double = 0.0,
+    val shiftCompensation: Double = 0.0,
+    val grossSalary: Double = 0.0,
+    val totalForEpf: Double = 0.0,
+    val totalForEtf: Double = 0.0,
+    val totalForTax: Double = 0.0,
+    val apit: Double = 0.0,
+    val lumpsumTax: Double = 0.0,
+    val stampDuty: Double = 0.0,
+    val epfEmployee: Double = 0.0,
+    val funeralFund: Double = 0.0,
+    val excessMobile: Double = 0.0,
+    val mealsDeduction: Double = 0.0,
+    val totalDeductions: Double = 0.0,
+    val netSalary: Double = 0.0,
+    val cashSalary: Double = 0.0,
+    val salaryToBank: Double = 0.0,
+    val epfEmployer: Double = 0.0,
+    val etfEmployer: Double = 0.0,
+    val stampDutyEmployer: Double = 0.0,
     val rawText: String = "",
     val importedAt: Long = System.currentTimeMillis()
 )

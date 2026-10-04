@@ -1,11 +1,13 @@
 package com.example
 
-import com.example.moneymanager.domain.model.BudgetExpenseItem
-import com.example.moneymanager.domain.model.ParsedBudgetSheet
-import com.example.moneymanager.domain.model.ParsedSalarySlip
+import com.example.moneymanager.data.local.entity.BudgetMonth
+import com.example.moneymanager.data.local.entity.ExpenseLine
+import com.example.moneymanager.data.local.entity.SalaryRecord
+import com.example.moneymanager.domain.model.DiscrepancySeverity
 import com.example.moneymanager.domain.usecase.ReconcileMonthlyFinancesUseCase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -14,56 +16,67 @@ class ReconciliationUseCaseTest {
     private val useCase = ReconcileMonthlyFinancesUseCase()
 
     @Test
-    fun execute_reconcilesBalanceAndDetectsWarnings() {
-        val slip = ParsedSalarySlip(
+    fun execute_balancedSriLankanBudget_computesCorrectClosingBalance() {
+        val budgetMonth = BudgetMonth(
             monthKey = "2026-10",
-            basicSalary = 192455.33,
-            grossSalary = 268569.16,
-            totalDeductions = 40082.10,
-            netSalary = 228487.06
+            openingBankBalance = 3500.00,
+            sheetBasicSalary = 192455.00,
+            savingsTarget = 25000.00
+        )
+
+        val salaryRecord = SalaryRecord(
+            monthKey = "2026-10",
+            basicSalary = 192455.00,
+            grossSalary = 246569.00,
+            totalDeductions = 39146.40,
+            netSalary = 207422.60
         )
 
         val expenses = listOf(
-            BudgetExpenseItem("Rent/mortgage", 25000.0, 0.0, 25000.0, true),
-            BudgetExpenseItem("Maiyon Van", 12000.0, 12000.0, 0.0, true),
-            BudgetExpenseItem("Sachini", 110000.0, 100000.0, 10000.0, false)
+            ExpenseLine(id = 1, monthKey = "2026-10", itemName = "Rent", budgetAmount = 45000.0, notPaidAmount = 0.0, realPayAmount = 45000.0, isMandatory = true),
+            ExpenseLine(id = 2, monthKey = "2026-10", itemName = "CEB Electricity", budgetAmount = 12500.0, notPaidAmount = 0.0, realPayAmount = 12500.0, isMandatory = true),
+            ExpenseLine(id = 3, monthKey = "2026-10", itemName = "Credit Card", budgetAmount = 35000.0, notPaidAmount = 15000.0, realPayAmount = 20000.0, isMandatory = true),
+            ExpenseLine(id = 4, monthKey = "2026-10", itemName = "Dining Out", budgetAmount = 10000.0, notPaidAmount = 0.0, realPayAmount = 10000.0, isMandatory = false)
         )
 
-        val sheet = ParsedBudgetSheet(
-            monthKey = "2026-10",
-            openingBankBalance = 100000.0,
-            expenses = expenses,
-            salaryBreakdown = mapOf(
-                "Basic Salary" to 192455.00,
-                "Sal" to 240760.00
-            ),
-            totalExpensesColB = 147000.0,
-            totalNotPaid = 112000.0,
-            totalRealPay = 35000.0,
-            savingAllocation = 50000.0,
-            handSave = 40000.0,
-            rawRowCount = 3
-        )
+        val result = useCase.execute("2026-10", salaryRecord, budgetMonth, expenses)
 
-        val result = useCase.execute(slip, sheet, "2026-10")
+        assertNotNull(result)
+        assertEquals(3500.00, result.openingBalance, 0.01)
+        assertEquals(207422.60, result.netSalary, 0.01)
+        assertEquals(87500.00, result.totalRealPay, 0.01)
+        assertEquals(15000.00, result.totalNotPaid, 0.01)
+        assertEquals(77500.00, result.mandatoryRealPay, 0.01)
+        assertEquals(10000.00, result.optionalRealPay, 0.01)
 
-        assertEquals(228487.06, result.netSalary, 0.01)
-        assertEquals(100000.00, result.openingBalance, 0.01)
-        assertEquals(25000.00, result.mandatoryExpenses, 0.01)
-        assertEquals(10000.00, result.optionalExpenses, 0.01)
-        assertEquals(35000.00, result.totalRealPay, 0.01)
-
-        // closingBalance = opening (100,000) + netSalary (228,487.06) - realPay (35,000) = 293,487.06
-        val expectedClosing = 100000.0 + 228487.06 - 35000.0
-        assertEquals(expectedClosing, result.closingBalance, 0.01)
-
+        // 3,500.00 + 207,422.60 - 87,500.00 = 123,422.60
+        assertEquals(123422.60, result.closingBalance, 0.01)
         assertFalse(result.isOverspent)
-        assertTrue(result.isSavingsTargetMet) // 293,487.06 >= 50,000
-        assertTrue(result.hasCarryForwardUnpaid) // 112,000 unpaid
+    }
 
-        // Check that unpaid warning was generated
-        assertTrue(result.warnings.any { it.contains("Carry-forward") })
-        // Check that Sal variance warning was generated
-        assertTrue(result.warnings.any { it.contains("Income variance") })
+    @Test
+    fun execute_overspentBudget_detectsErrorSeverityDeficit() {
+        val budgetMonth = BudgetMonth(
+            monthKey = "2026-10",
+            openingBankBalance = 1000.00,
+            sheetBasicSalary = 100000.00
+        )
+        val salaryRecord = SalaryRecord(
+            monthKey = "2026-10",
+            basicSalary = 100000.00,
+            grossSalary = 100000.00,
+            totalDeductions = 10000.00,
+            netSalary = 90000.00
+        )
+        val expenses = listOf(
+            ExpenseLine(id = 1, monthKey = "2026-10", itemName = "Major Obligation", budgetAmount = 150000.0, notPaidAmount = 0.0, realPayAmount = 150000.0, isMandatory = true)
+        )
+
+        val result = useCase.execute("2026-10", salaryRecord, budgetMonth, expenses)
+
+        // 1000 + 90000 - 150000 = -59000
+        assertTrue(result.isOverspent)
+        assertEquals(59000.00, result.overspentAmount, 0.01)
+        assertTrue(result.discrepancies.any { it.severity == DiscrepancySeverity.ERROR })
     }
 }

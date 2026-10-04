@@ -1,6 +1,7 @@
 package com.example.moneymanager.ui.importdata
 
 import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -16,45 +17,35 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.TableChart
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.moneymanager.core.util.CurrencyFormatter
-import com.example.moneymanager.ui.components.MonthSelectorHeader
-import com.example.moneymanager.ui.components.OfflineSecurityBadge
 
 @Composable
 fun ImportScreen(
@@ -63,39 +54,41 @@ fun ImportScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val status by viewModel.status.collectAsStateWithLifecycle()
-    val selectedMonth by viewModel.selectedMonth.collectAsStateWithLifecycle()
+    val importState by viewModel.importState.collectAsState()
 
-    // File pickers
     val pdfPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
         if (uri != null) {
-            viewModel.importSalaryPdf(context, uri)
+            viewModel.parsePaySlipPdf(context, uri)
         }
     }
 
-    val sheetPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
+    val csvPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
         if (uri != null) {
-            viewModel.importBudgetSheet(context, uri)
+            viewModel.parseBudgetSheet(context, uri, isExcel = false)
         }
     }
 
-    val imagePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
+    val excelPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
         if (uri != null) {
-            try {
-                val stream = context.contentResolver.openInputStream(uri)
-                val bitmap = BitmapFactory.decodeStream(stream)
-                stream?.close()
-                if (bitmap != null) {
-                    viewModel.runOcrOnBitmap(bitmap)
-                }
-            } catch (e: Exception) {
-                // Handled in VM
+            viewModel.parseBudgetSheet(context, uri, isExcel = true)
+        }
+    }
+
+    val ocrImagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val bitmap = context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it)
+            }
+            if (bitmap != null) {
+                viewModel.parsePaySlipOcr(bitmap)
             }
         }
     }
@@ -103,44 +96,27 @@ fun ImportScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp)
+            .padding(16.dp)
             .testTag("import_screen"),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "Document Import",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Direct stream parsing • Zero cloud sync",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                OfflineSecurityBadge()
-            }
-        }
-
-        item {
-            MonthSelectorHeader(
-                currentMonthKey = selectedMonth,
-                onMonthSelected = { viewModel.setMonth(it) }
+            Text(
+                text = "Import Financial Records",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "100% In-Memory Parsing. Files are never saved unencrypted to disk.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
-        // Status Cards
-        when (val s = status) {
-            is ImportStatus.Processing -> {
-                item {
+        // Status Card
+        item {
+            when (val state = importState) {
+                is ImportState.Processing -> {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -150,316 +126,233 @@ fun ImportScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(text = s.message, style = MaterialTheme.typography.bodyMedium)
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(text = state.message, style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                 }
-            }
-            is ImportStatus.Success -> {
-                item {
+                is ImportState.SalarySlipSuccess -> {
                     Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("import_success_card"),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFFDCFCE7))
+                        modifier = Modifier.fillMaxWidth().testTag("salary_import_success_card"),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = "Success",
-                                    tint = Color(0xFF16A34A)
-                                )
+                                Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Import Verified",
+                                    text = "Salary Slip Imported for ${state.slip.monthKey}!",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF14532D)
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
                             }
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = s.message,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color(0xFF166534)
-                            )
+                            Text("Gross Earnings: ${CurrencyFormatter.formatLkr(state.slip.grossSalary)}")
+                            Text("Total Deductions: ${CurrencyFormatter.formatLkr(state.slip.totalDeductions)}")
+                            Text("Net Take Home: ${CurrencyFormatter.formatLkr(state.slip.netSalary)}", fontWeight = FontWeight.Bold)
+
                             Spacer(modifier = Modifier.height(12.dp))
                             Button(
                                 onClick = onNavigateToDashboard,
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A))
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("View in Dashboard")
+                                Text("Go to Dashboard")
                             }
                         }
                     }
                 }
-            }
-            is ImportStatus.Error -> {
-                item {
+                is ImportState.BudgetSheetSuccess -> {
                     Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("import_error_card"),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                        modifier = Modifier.fillMaxWidth().testTag("sheet_import_success_card"),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.Error,
-                                    contentDescription = "Error",
-                                    tint = MaterialTheme.colorScheme.error
-                                )
+                                Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Import Discrepancy",
+                                    text = "Budget Sheet Imported for ${state.sheet.monthKey}!",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Opening Bank Balance: ${CurrencyFormatter.formatLkr(state.sheet.openingBankBalance)}")
+                            Text("Total Expense Items: ${state.sheet.expenseItems.size}")
+                            Text("Total Real Outflow: ${CurrencyFormatter.formatLkr(state.sheet.totalRealPay)}")
+                            Text("Unpaid (Carried Over): ${CurrencyFormatter.formatLkr(state.sheet.totalNotPaid)}")
+
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(
+                                onClick = onNavigateToDashboard,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("View Reconciled Dashboard")
+                            }
+                        }
+                    }
+                }
+                is ImportState.Error -> {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(verticalAlignment = Alignment.Top) {
+                                Icon(imageVector = Icons.Default.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = state.message,
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onErrorContainer
                                 )
                             }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = s.error,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onErrorContainer
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            OutlinedButton(onClick = { viewModel.resetStatus() }) {
-                                Text("Dismiss")
+                            if (state.canFallbackToOcr) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = { ocrImagePickerLauncher.launch("image/*") },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                ) {
+                                    Icon(imageVector = Icons.Default.CameraAlt, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Scanned PDF? Run On-Device OCR")
+                                }
                             }
                         }
                     }
                 }
+                ImportState.Idle -> { /* Nothing */ }
             }
-            is ImportStatus.NeedsOcr -> {
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                text = "Scanned PDF Detected",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = s.message,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Button(
-                                onClick = { imagePickerLauncher.launch("image/*") }
-                            ) {
-                                Icon(imageVector = Icons.Default.AutoAwesome, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("Select Page Image / OCR")
-                            }
-                        }
-                    }
-                }
-            }
-            ImportStatus.Idle -> {}
         }
 
-        // Two Primary Import Cards (PDF + CSV/XLSX)
-        item {
-            Text(
-                text = "Select Document to Reconcile",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-        }
-
-        // Card 1: Salary Slip PDF
+        // Section 1: Salary Slip PDF Import
         item {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("import_pdf_card"),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Column(modifier = Modifier.padding(20.dp)) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFFFEE2E2)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PictureAsPdf,
-                                contentDescription = null,
-                                tint = Color(0xFFDC2626),
-                                modifier = Modifier.size(26.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column {
-                            Text(
-                                text = "1. Salary Slip PDF",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Sri Lanka 2-Column Pay Slip (LKR)",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        text = "Parses Gross, EPF, ETF, APIT, and Net Salary with strict mathematical validation (Gross - Deductions = Net).",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Button(
-                        onClick = { pdfPickerLauncher.launch("application/pdf") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("select_pdf_button"),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        Icon(imageVector = Icons.Default.FileUpload, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Select Salary Slip PDF")
-                    }
-                }
-            }
-        }
-
-        // Card 2: Budget Sheet CSV/XLSX
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("import_sheet_card"),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFFE0F2F1)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.TableChart,
-                                contentDescription = null,
-                                tint = Color(0xFF006A60),
-                                modifier = Modifier.size(26.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column {
-                            Text(
-                                text = "2. Monthly Budget CSV / XLSX",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Left (Expenses A–D) & Right (Salary K–N)",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        text = "Reads 'Current Bank Rs' opening balance, auto-categorizes mandatory vs optional expenses, and extracts targets.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Button(
-                        onClick = { sheetPickerLauncher.launch("*/*") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("select_sheet_button"),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.secondary
-                        )
-                    ) {
-                        Icon(imageVector = Icons.Default.FileUpload, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Select Budget CSV or XLSX")
-                    }
-                }
-            }
-        }
-
-        // Quick Real-World Demo / Sample Data loader
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("sample_data_card"),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                )
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                        Icon(imageVector = Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Test with Real-World Sri Lankan Data",
-                            style = MaterialTheme.typography.titleSmall,
+                            text = "1. Salary Slip PDF",
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
                     }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
                     Text(
-                        text = "Load the exact sample Salary Slip (Rs. 268,569.16 Gross) and 2-section budget (20 expense items) from the project specification with 1 click.",
+                        text = "Parses 2-column layout: Basic, Allowances, Gross, APIT, EPF (8%), Funeral Fund, Meals, and Net Take Home.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 6.dp)
                     )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    FilledTonalButton(
-                        onClick = { viewModel.loadRealisticSampleData() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("load_sample_data_button")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Load Specification Sample Data")
+                        Button(
+                            onClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
+                            modifier = Modifier.weight(1f).testTag("pick_payslip_pdf_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.FileUpload, contentDescription = null)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Pick PDF")
+                        }
+
+                        OutlinedButton(
+                            onClick = { ocrImagePickerLauncher.launch("image/*") },
+                            modifier = Modifier.weight(1f).testTag("pick_payslip_ocr_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.CameraAlt, contentDescription = null)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("OCR Image")
+                        }
                     }
                 }
             }
         }
 
+        // Section 2: Budget Sheet Import
         item {
-            Spacer(modifier = Modifier.height(32.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(imageVector = Icons.Default.TableChart, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "2. Monthly Budget Sheet (CSV / Excel)",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Text(
+                        text = "Parses Columns A-D (Expenses, Amount, Not pay, Total real pay) & Columns K-N (Current Bank Rs, Fixed Expenses, Salary breakdown, Saving targets).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { csvPickerLauncher.launch(arrayOf("text/*", "text/csv")) },
+                            modifier = Modifier.weight(1f).testTag("pick_budget_csv_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.FileUpload, contentDescription = null)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Pick CSV")
+                        }
+
+                        Button(
+                            onClick = { excelPickerLauncher.launch(arrayOf("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")) },
+                            modifier = Modifier.weight(1f).testTag("pick_budget_excel_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.FileUpload, contentDescription = null)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Pick XLSX")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section 3: Load Authentic Specification Sample Data
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Quick Demo / Verification",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Load authentic Sri Lankan salary slip (Gross Rs. 246,569.00 / Net Rs. 207,422.60) and budget sheet with Opening Bank Rs. 3,500.00 to test reconciliation instantly.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedButton(
+                        onClick = { viewModel.loadSampleData() },
+                        modifier = Modifier.fillMaxWidth().testTag("load_sample_data_button")
+                    ) {
+                        Icon(imageVector = Icons.Default.CloudDownload, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Load Sample 2026-10 Financial Data")
+                    }
+                }
+            }
         }
     }
 }

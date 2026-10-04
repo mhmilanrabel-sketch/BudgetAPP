@@ -7,147 +7,272 @@ import com.example.moneymanager.domain.model.ParsedBudgetSheet
 import com.opencsv.CSVReader
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
-import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.util.Locale
-import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 
-class BudgetSheetParser(private val context: Context? = null) {
+class BudgetSheetParser(private val context: Context) {
 
-    companion object {
-        private const val TAG = "BudgetSheetParser"
+    private val mandatoryKeywords = mutableSetOf(
+        "insurance", "rent", "loan", "card", "bill", "electricity", "water", "ceb",
+        "dialog", "mobitel", "sl telecom", "slt", "wifi", "medical", "hospital",
+        "school", "classes", "tuition", "medicine", "mother", "father", "fixed",
+        "apit", "epf", "tax", "petrol", "fuel"
+    )
 
-        val DEFAULT_MANDATORY_KEYWORDS = listOf(
-            "rent", "mortgage", "electric", "water", "gas", "cell phone", "peo tv",
-            "van", "fees", "school", "poli", "washing", "grocery", "sanga",
-            "nipuna", "mint pay", "amma"
-        )
+    fun addMandatoryKeyword(keyword: String) {
+        mandatoryKeywords.add(keyword.lowercase(Locale.ENGLISH).trim())
     }
 
-    fun parseCsv(
-        inputStream: InputStream,
-        targetMonthKey: String? = null,
-        customKeywords: List<String>? = null
-    ): ParsedBudgetSheet {
-        val reader = CSVReader(InputStreamReader(inputStream))
-        val rawRows = reader.readAll().map { it.toList() }
-        reader.close()
-        return parseGrid(rawRows, targetMonthKey, customKeywords ?: getSavedMandatoryKeywords())
-    }
+    fun getMandatoryKeywords(): Set<String> = mandatoryKeywords.toSet()
 
-    fun parseXlsx(
-        inputStream: InputStream,
-        targetMonthKey: String? = null,
-        customKeywords: List<String>? = null
-    ): ParsedBudgetSheet {
-        val grid = readXlsxToGrid(inputStream)
-        return parseGrid(grid, targetMonthKey, customKeywords ?: getSavedMandatoryKeywords())
-    }
-
-    fun parseInputStreamAuto(
-        inputStream: InputStream,
-        isXlsx: Boolean,
-        targetMonthKey: String? = null,
-        customKeywords: List<String>? = null
-    ): ParsedBudgetSheet {
-        return if (isXlsx) {
-            parseXlsx(inputStream, targetMonthKey, customKeywords)
+    fun parse(inputStream: InputStream, isExcel: Boolean, monthKeyFallback: String = ""): ParsedBudgetSheet {
+        val rows: List<List<String>> = if (isExcel) {
+            parseXlsxStreaming(inputStream)
         } else {
-            parseCsv(inputStream, targetMonthKey, customKeywords)
+            parseCsv(inputStream)
         }
+
+        return processGridRows(rows, monthKeyFallback)
     }
 
-    /**
-     * Common core parsing logic for both CSV and XLSX grid.
-     */
-    fun parseGrid(
-        grid: List<List<String>>,
-        targetMonthKey: String?,
-        mandatoryKeywords: List<String>
-    ): ParsedBudgetSheet {
-        if (grid.isEmpty()) {
-            throw IllegalArgumentException("The sheet is empty.")
+    private fun parseCsv(inputStream: InputStream): List<List<String>> {
+        val reader = CSVReader(InputStreamReader(inputStream, Charsets.UTF_8))
+        val rows = mutableListOf<List<String>>()
+        var line: Array<String>?
+        while (reader.readNext().also { line = it } != null) {
+            rows.add(line!!.toList())
+        }
+        reader.close()
+        return rows
+    }
+
+    private fun parseXlsxStreaming(inputStream: InputStream): List<List<String>> {
+        val zip = ZipInputStream(inputStream)
+        var entry = zip.nextEntry
+        val sharedStrings = mutableListOf<String>()
+        var sheetBytes: ByteArray? = null
+
+        while (entry != null) {
+            if (entry.name.equals("xl/sharedStrings.xml", ignoreCase = true)) {
+                sharedStrings.addAll(parseSharedStringsXml(zip))
+            } else if (entry.name.equals("xl/worksheets/sheet1.xml", ignoreCase = true)) {
+                sheetBytes = zip.readBytes()
+            }
+            entry = zip.nextEntry
         }
 
-        var openingBalance = 0.0
-        val expenses = mutableListOf<BudgetExpenseItem>()
-        val salaryBreakdown = mutableMapOf<String, Double>()
+        if (sheetBytes != null) {
+            return parseSheetXml(sheetBytes.inputStream(), sharedStrings)
+        }
+        return emptyList()
+    }
 
-        // 1. Scan for Opening Balance (e.g. row with "Current Bank Rs" in Col A or B)
-        for (row in grid) {
-            val colA = row.getOrNull(0)?.trim() ?: ""
-            val colB = row.getOrNull(1)?.trim() ?: ""
-            if (colA.contains("Current Bank", ignoreCase = true)) {
-                openingBalance = CurrencyFormatter.parseAmount(colB)
+    private fun parseSharedStringsXml(stream: InputStream): List<String> {
+        val list = mutableListOf<String>()
+        val factory = XmlPullParserFactory.newInstance()
+        val parser = factory.newPullParser()
+        parser.setInput(stream, "UTF-8")
+
+        var eventType = parser.eventType
+        var currentText = StringBuilder()
+        var insideT = false
+
+        while (eventType != XmlPullParser.END_DOCUMENT) {
+            val name = parser.name
+            when (eventType) {
+                XmlPullParser.START_TAG -> {
+                    if (name.equals("t", ignoreCase = true)) {
+                        insideT = true
+                        currentText.setLength(0)
+                    }
+                }
+                XmlPullParser.TEXT -> {
+                    if (insideT) {
+                        currentText.append(parser.text)
+                    }
+                }
+                XmlPullParser.END_TAG -> {
+                    if (name.equals("t", ignoreCase = true)) {
+                        insideT = false
+                        list.add(currentText.toString())
+                    }
+                }
+            }
+            eventType = parser.next()
+        }
+        return list
+    }
+
+    private fun parseSheetXml(stream: InputStream, sharedStrings: List<String>): List<List<String>> {
+        val rows = mutableListOf<List<String>>()
+        val factory = XmlPullParserFactory.newInstance()
+        val parser = factory.newPullParser()
+        parser.setInput(stream, "UTF-8")
+
+        var eventType = parser.eventType
+        var currentRow = mutableListOf<String>()
+        var currentCellRef = ""
+        var cellType = ""
+        var currentVal = StringBuilder()
+        var insideV = false
+
+        while (eventType != XmlPullParser.END_DOCUMENT) {
+            val name = parser.name
+            when (eventType) {
+                XmlPullParser.START_TAG -> {
+                    if (name.equals("row", ignoreCase = true)) {
+                        currentRow = mutableListOf()
+                    } else if (name.equals("c", ignoreCase = true)) {
+                        currentCellRef = parser.getAttributeValue(null, "r") ?: ""
+                        cellType = parser.getAttributeValue(null, "t") ?: ""
+                        currentVal.setLength(0)
+                    } else if (name.equals("v", ignoreCase = true)) {
+                        insideV = true
+                    }
+                }
+                XmlPullParser.TEXT -> {
+                    if (insideV) {
+                        currentVal.append(parser.text)
+                    }
+                }
+                XmlPullParser.END_TAG -> {
+                    if (name.equals("v", ignoreCase = true)) {
+                        insideV = false
+                    } else if (name.equals("c", ignoreCase = true)) {
+                        val raw = currentVal.toString().trim()
+                        val value = if (cellType == "s") {
+                            val idx = raw.toIntOrNull() ?: -1
+                            if (idx in sharedStrings.indices) sharedStrings[idx] else raw
+                        } else {
+                            raw
+                        }
+                        val colIdx = colRefToIndex(currentCellRef)
+                        while (currentRow.size < colIdx) {
+                            currentRow.add("")
+                        }
+                        currentRow.add(value)
+                    } else if (name.equals("row", ignoreCase = true)) {
+                        rows.add(currentRow)
+                    }
+                }
+            }
+            eventType = parser.next()
+        }
+        return rows
+    }
+
+    private fun colRefToIndex(cellRef: String): Int {
+        var col = 0
+        for (ch in cellRef) {
+            if (ch in 'A'..'Z') {
+                col = col * 26 + (ch - 'A' + 1)
+            } else {
                 break
             }
         }
+        return maxOf(0, col - 1)
+    }
 
-        // 2. Scan Left Section (Expenses: Col A=Item, Col B=Amount, Col C=Not Pay, Col D=Total Real Pay)
-        // and Right Section (Salary: Col K (index 10) = Label, Col N (index 13 or adjacent) = Value)
-        for (row in grid) {
-            val colA = row.getOrNull(0)?.trim() ?: ""
-            val colB = row.getOrNull(1)?.trim() ?: ""
-            val colC = row.getOrNull(2)?.trim() ?: ""
-            val colD = row.getOrNull(3)?.trim() ?: ""
+    private fun processGridRows(rows: List<List<String>>, fallbackMonthKey: String): ParsedBudgetSheet {
+        var openingBankBalance = 0.0
+        val expenseItems = mutableListOf<BudgetExpenseItem>()
+        val salaryBreakdown = mutableMapOf<String, Double>()
+        var detectedMonthKey = fallbackMonthKey
 
-            // Left side expense row check
-            if (colA.isNotBlank() &&
-                !colA.equals("Current Bank Rs", ignoreCase = true) &&
-                !colA.equals("Item", ignoreCase = true) &&
-                !colA.equals("Description", ignoreCase = true) &&
-                !colA.equals("Expenses", ignoreCase = true) &&
-                !colA.equals("Total", ignoreCase = true)
-            ) {
-                val budgetAmt = CurrencyFormatter.parseAmount(colB)
-                val notPayAmt = CurrencyFormatter.parseAmount(colC)
-                val explicitRealPay = if (colD.isNotBlank()) CurrencyFormatter.parseAmount(colD) else null
+        for (row in rows) {
+            if (row.isEmpty()) continue
 
-                // If real pay is explicitly given in col D, use it; otherwise budgetAmt - notPayAmt
-                val realPayAmt = explicitRealPay ?: (budgetAmt - notPayAmt).coerceAtLeast(0.0)
-
-                if (budgetAmt > 0.0 || notPayAmt > 0.0 || realPayAmt > 0.0) {
-                    val isMandatory = isItemMandatory(colA, mandatoryKeywords)
-                    expenses.add(
-                        BudgetExpenseItem(
-                            name = colA,
-                            amount = budgetAmt,
-                            notPay = notPayAmt,
-                            realPay = realPayAmt,
-                            isMandatory = isMandatory
-                        )
-                    )
+            // 1. Detect "Current Bank Rs" (Row 1 opening balance)
+            val fullRowText = row.joinToString(" ")
+            if (fullRowText.contains("Current Bank", ignoreCase = true)) {
+                for (cell in row) {
+                    val amt = CurrencyFormatter.parseAmount(cell)
+                    if (amt > 0.0) {
+                        openingBankBalance = amt
+                        break
+                    }
                 }
             }
 
-            // Right side salary scan: Col K is index 10, Col N is index 13
-            // Also search cells in row if offset varies slightly
+            // Detect Month if present
+            if (detectedMonthKey.isBlank()) {
+                val match = Regex("\\b(20[2-3][0-9])[-/](0[1-9]|1[0-2])\\b").find(fullRowText)
+                if (match != null) {
+                    detectedMonthKey = match.value.replace('/', '-')
+                }
+            }
+
+            // 2. Parse Left Section (Cols A to D: Item, Amount, Not pay, Total real pay)
+            parseLeftSectionRow(row, expenseItems)
+
+            // 3. Parse Right Section (Cols K to N: Monthly Fixed Expenses & Salary)
             parseRightSectionRow(row, salaryBreakdown)
         }
 
-        val totalExpensesColB = expenses.sumOf { it.amount }
-        val totalNotPaid = expenses.sumOf { it.notPay }
-        val totalRealPay = expenses.sumOf { it.realPay }
+        if (detectedMonthKey.isBlank()) {
+            val now = java.time.LocalDate.now()
+            val m = if (now.monthValue < 10) "0${now.monthValue}" else "${now.monthValue}"
+            detectedMonthKey = "${now.year}-$m"
+        }
 
-        val savingAllocation = salaryBreakdown["Saving"] ?: salaryBreakdown["Savings"] ?: 0.0
-        val handSave = salaryBreakdown["Hand Save"] ?: salaryBreakdown["HandSave"] ?: 0.0
+        val totalAmount = expenseItems.sumOf { it.amount }
+        val totalNotPaid = expenseItems.sumOf { it.notPay }
+        val totalRealPay = expenseItems.sumOf { it.totalRealPay }
 
-        val monthKey = targetMonthKey ?: CurrencyFormatter.getCurrentMonthKey()
+        val basicSalary = salaryBreakdown["Basic Salary"] ?: salaryBreakdown["basic"] ?: 0.0
+        val savingsTarget = salaryBreakdown["Saving"] ?: salaryBreakdown["saving"] ?: 0.0
+        val salBalance = salaryBreakdown["Sal"] ?: salaryBreakdown["sal"] ?: 0.0
+        val handSave = salaryBreakdown["Hand Save"] ?: salaryBreakdown["hand save"] ?: 0.0
 
         return ParsedBudgetSheet(
-            monthKey = monthKey,
-            openingBankBalance = openingBalance,
-            expenses = expenses,
-            salaryBreakdown = salaryBreakdown,
-            totalExpensesColB = totalExpensesColB,
+            monthKey = detectedMonthKey,
+            openingBankBalance = openingBankBalance,
+            expenseItems = expenseItems,
+            totalExpenseAmount = totalAmount,
             totalNotPaid = totalNotPaid,
             totalRealPay = totalRealPay,
-            savingAllocation = savingAllocation,
-            handSave = handSave,
-            rawRowCount = grid.size
+            salaryBreakdown = salaryBreakdown,
+            savingsTarget = savingsTarget,
+            basicSalary = basicSalary,
+            salBalance = salBalance,
+            handSave = handSave
         )
+    }
+
+    private fun parseLeftSectionRow(row: List<String>, expenseItems: MutableList<BudgetExpenseItem>) {
+        if (row.size < 2) return
+        val itemCol = row[0].trim()
+        val amountCol = row.getOrNull(1)?.trim() ?: ""
+        val notPayCol = row.getOrNull(2)?.trim() ?: ""
+        val realPayCol = row.getOrNull(3)?.trim() ?: ""
+
+        if (isIgnoredHeaderOrTotal(itemCol)) return
+
+        val amount = CurrencyFormatter.parseAmount(amountCol)
+        val notPay = CurrencyFormatter.parseAmount(notPayCol)
+        var realPay = CurrencyFormatter.parseAmount(realPayCol)
+
+        // Compute realPay if formula was not evaluated: realPay = amount - notPay
+        if (realPay == 0.0 && amount > 0.0 && notPay >= 0.0) {
+            realPay = amount - notPay
+        }
+
+        if (itemCol.isNotBlank() && (amount > 0.0 || notPay > 0.0 || realPay > 0.0)) {
+            val isMandatory = isMandatoryExpense(itemCol)
+            val category = if (isMandatory) "Mandatory" else "Optional"
+            expenseItems.add(
+                BudgetExpenseItem(
+                    itemName = itemCol,
+                    amount = amount,
+                    notPay = notPay,
+                    totalRealPay = realPay,
+                    isMandatory = isMandatory,
+                    category = category
+                )
+            )
+        }
     }
 
     private fun parseRightSectionRow(row: List<String>, salaryBreakdown: MutableMap<String, Double>) {
@@ -172,17 +297,6 @@ class BudgetSheetParser(private val context: Context? = null) {
                 }
             }
         }
-    }
-
-    private fun listOfOrNull(row: List<String>, vararg indices: Int): Double? {
-        for (idx in indices) {
-            val cell = row.getOrNull(idx)?.trim()
-            if (!cell.isNullOrBlank()) {
-                val amt = CurrencyFormatter.parseAmount(cell)
-                if (amt > 0.0 || cell == "0" || cell == "0.00") return amt
-            }
-        }
-        return null
     }
 
     private fun isSalaryLabel(text: String): Boolean {
@@ -210,196 +324,35 @@ class BudgetSheetParser(private val context: Context? = null) {
         val lower = rawLabel.lowercase(Locale.ENGLISH).trim()
         val standardLabel = when {
             lower.contains("basic salary") -> "Basic Salary"
-            lower.contains("exceptional incentive") -> "Exceptional Incentive"
-            lower.contains("vehicle allowance") -> "Vehicle Allowance"
-            lower.contains("shift compensation") -> "Shift compensation"
             lower.contains("gross salary") -> "Gross Salary"
-            lower == "apit" || lower.startsWith("apit") -> "APIT"
-            lower == "epf" || lower.startsWith("epf") -> "EPF"
-            lower.contains("excess mobile") -> "Excess Mobile"
-            lower.contains("meals") -> "Meals"
+            lower.contains("vehicle allowance") -> "Vehicle Allowance"
+            lower.contains("shift compensation") -> "Shift Compensation"
+            lower.contains("exceptional incentive") -> "Exceptional Incentive"
+            lower.contains("apit") -> "APIT"
+            lower.contains("epf") -> "EPF"
             lower.contains("total deductions") -> "Total Deductions"
             lower == "sal" -> "Sal"
-            lower.contains("exspenses total") || lower.contains("expenses total") -> "Exspenses Total"
-            lower.contains("hand save") -> "Hand Save"
-            lower.contains("saving") -> "Saving"
-            lower.contains("other") -> "Other"
-            else -> rawLabel
+            lower == "saving" -> "Saving"
+            lower == "hand save" -> "Hand Save"
+            lower == "exspenses total" -> "Expenses Total"
+            lower == "other" -> "Other"
+            else -> rawLabel.trim()
         }
         map[standardLabel] = amount
     }
 
-    fun isItemMandatory(name: String, keywords: List<String>): Boolean {
-        val lower = name.lowercase(Locale.ENGLISH)
-        return keywords.any { lower.contains(it.lowercase(Locale.ENGLISH).trim()) }
+    private fun isMandatoryExpense(itemName: String): Boolean {
+        val lower = itemName.lowercase(Locale.ENGLISH)
+        return mandatoryKeywords.any { lower.contains(it) }
     }
 
-    fun getSavedMandatoryKeywords(): List<String> {
-        val prefs = context?.getSharedPreferences("moneymanager_settings", Context.MODE_PRIVATE)
-        val saved = prefs?.getString("mandatory_keywords", null)
-        return if (!saved.isNullOrBlank()) {
-            saved.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-        } else {
-            DEFAULT_MANDATORY_KEYWORDS
-        }
-    }
-
-    fun saveMandatoryKeywords(keywords: List<String>) {
-        val prefs = context?.getSharedPreferences("moneymanager_settings", Context.MODE_PRIVATE)
-        prefs?.edit()?.putString("mandatory_keywords", keywords.joinToString(","))?.apply()
-    }
-
-    /**
-     * Pure on-device XLSX parsing without heavy external AWT dependencies.
-     * Extracts sharedStrings.xml and sheet1.xml from the ZIP container.
-     */
-    private fun readXlsxToGrid(inputStream: InputStream): List<List<String>> {
-        val bytes = inputStream.readBytes()
-        var sharedStrings = listOf<String>()
-        var sheetBytes: ByteArray? = null
-
-        ZipInputStream(ByteArrayInputStream(bytes)).use { zis ->
-            var entry: ZipEntry? = zis.nextEntry
-            while (entry != null) {
-                when {
-                    entry.name.equals("xl/sharedStrings.xml", ignoreCase = true) -> {
-                        sharedStrings = parseSharedStrings(zis)
-                    }
-                    entry.name.equals("xl/worksheets/sheet1.xml", ignoreCase = true) ||
-                            (entry.name.startsWith("xl/worksheets/sheet", ignoreCase = true) && sheetBytes == null) -> {
-                        sheetBytes = zis.readBytes()
-                    }
-                }
-                zis.closeEntry()
-                entry = zis.nextEntry
-            }
-        }
-
-        if (sheetBytes == null) {
-            throw IllegalArgumentException("Invalid Excel file: No worksheet found inside archive.")
-        }
-
-        return parseSheetXml(ByteArrayInputStream(sheetBytes!!), sharedStrings)
-    }
-
-    private fun parseSharedStrings(stream: InputStream): List<String> {
-        val list = mutableListOf<String>()
-        val factory = XmlPullParserFactory.newInstance()
-        val parser = factory.newPullParser()
-        parser.setInput(stream, "UTF-8")
-        var event = parser.eventType
-        var currentText = StringBuilder()
-        var insideText = false
-
-        while (event != XmlPullParser.END_DOCUMENT) {
-            when (event) {
-                XmlPullParser.START_TAG -> {
-                    if (parser.name == "t") {
-                        insideText = true
-                        currentText.setLength(0)
-                    }
-                }
-                XmlPullParser.TEXT -> {
-                    if (insideText) {
-                        currentText.append(parser.text)
-                    }
-                }
-                XmlPullParser.END_TAG -> {
-                    if (parser.name == "t") {
-                        insideText = false
-                    } else if (parser.name == "si") {
-                        list.add(currentText.toString())
-                        currentText.setLength(0)
-                    }
-                }
-            }
-            event = parser.next()
-        }
-        return list
-    }
-
-    private fun parseSheetXml(stream: InputStream, sharedStrings: List<String>): List<List<String>> {
-        val grid = mutableListOf<MutableList<String>>()
-        val factory = XmlPullParserFactory.newInstance()
-        val parser = factory.newPullParser()
-        parser.setInput(stream, "UTF-8")
-        var event = parser.eventType
-
-        var currentRow = mutableMapOf<Int, String>()
-        var currentCellRef = ""
-        var currentCellType = ""
-        var currentValue = StringBuilder()
-        var insideValue = false
-
-        while (event != XmlPullParser.END_DOCUMENT) {
-            when (event) {
-                XmlPullParser.START_TAG -> {
-                    when (parser.name) {
-                        "row" -> {
-                            currentRow = mutableMapOf()
-                        }
-                        "c" -> {
-                            currentCellRef = parser.getAttributeValue(null, "r") ?: ""
-                            currentCellType = parser.getAttributeValue(null, "t") ?: ""
-                            currentValue.setLength(0)
-                        }
-                        "v", "t" -> {
-                            insideValue = true
-                        }
-                    }
-                }
-                XmlPullParser.TEXT -> {
-                    if (insideValue) {
-                        currentValue.append(parser.text)
-                    }
-                }
-                XmlPullParser.END_TAG -> {
-                    when (parser.name) {
-                        "v", "t" -> {
-                            insideValue = false
-                        }
-                        "c" -> {
-                            val colIdx = columnRefToIndex(currentCellRef)
-                            val rawVal = currentValue.toString().trim()
-                            val cellContent = if (currentCellType == "s") {
-                                val stringIndex = rawVal.toIntOrNull()
-                                if (stringIndex != null && stringIndex in sharedStrings.indices) {
-                                    sharedStrings[stringIndex]
-                                } else {
-                                    rawVal
-                                }
-                            } else {
-                                rawVal
-                            }
-                            if (colIdx >= 0) {
-                                currentRow[colIdx] = cellContent
-                            }
-                        }
-                        "row" -> {
-                            val maxCol = (currentRow.keys.maxOrNull() ?: -1) + 1
-                            val rowList = MutableList(maxOf(maxCol, 15)) { "" }
-                            for ((idx, v) in currentRow) {
-                                if (idx in rowList.indices) {
-                                    rowList[idx] = v
-                                }
-                            }
-                            grid.add(rowList)
-                        }
-                    }
-                }
-            }
-            event = parser.next()
-        }
-        return grid
-    }
-
-    private fun columnRefToIndex(cellRef: String): Int {
-        val colPart = cellRef.takeWhile { it.isLetter() }.uppercase(Locale.ENGLISH)
-        if (colPart.isEmpty()) return -1
-        var index = 0
-        for (ch in colPart) {
-            index = index * 26 + (ch - 'A' + 1)
-        }
-        return index - 1
+    private fun isIgnoredHeaderOrTotal(itemCol: String): Boolean {
+        val lower = itemCol.lowercase(Locale.ENGLISH)
+        return lower.contains("item") ||
+                lower.contains("current bank") ||
+                lower.contains("total") ||
+                lower.contains("exspenses total") ||
+                lower.contains("balance") ||
+                lower.contains("sub total")
     }
 }

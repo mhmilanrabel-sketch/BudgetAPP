@@ -10,37 +10,37 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Divider
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.moneymanager.core.util.CurrencyFormatter
 import com.example.moneymanager.data.local.entity.SalaryRecord
 import com.example.moneymanager.data.repository.MoneyManagerRepository
-import com.example.moneymanager.ui.components.FinancialMetricRow
-import com.example.moneymanager.ui.components.MonthSelectorHeader
-import com.example.moneymanager.ui.components.OfflineSecurityBadge
 
 @Composable
 fun SalaryBreakdownScreen(
@@ -49,242 +49,179 @@ fun SalaryBreakdownScreen(
     onMonthSelected: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val salaryRecord by repository.getSalaryRecord(selectedMonthKey)
-        .collectAsStateWithLifecycle(initialValue = null)
+    val allMonths by repository.getAllMonths().collectAsState(initial = emptyList())
+    val salaryRecord by repository.getSalaryRecord(selectedMonthKey).collectAsState(initial = null)
 
-    LazyColumn(
+    Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp)
-            .testTag("salary_breakdown_screen"),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(16.dp)
+            .testTag("salary_breakdown_screen")
     ) {
-        item {
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+        Text(
+            text = "Salary Breakdown",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = "Itemized earnings, statutory EPF/APIT deductions & contributions",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        // Month Selector
+        val monthList = allMonths.map { it.monthKey }.distinct().toMutableList()
+        if (!monthList.contains(selectedMonthKey)) {
+            monthList.add(0, selectedMonthKey)
+        }
+
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(vertical = 8.dp)
+        ) {
+            items(monthList) { mKey ->
+                FilterChip(
+                    selected = selectedMonthKey == mKey,
+                    onClick = { onMonthSelected(mKey) },
+                    label = { Text(mKey) }
+                )
+            }
+        }
+
+        if (salaryRecord == null) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
             ) {
-                Column {
-                    Text(
-                        text = "Salary Slip Analysis",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Authoritative PDF Income Source",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                OfflineSecurityBadge()
-            }
-        }
-
-        item {
-            MonthSelectorHeader(
-                currentMonthKey = selectedMonthKey,
-                onMonthSelected = onMonthSelected
-            )
-        }
-
-        if (salaryRecord != null) {
-            val record = salaryRecord!!
-
-            // Net Salary Header Card
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(20.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "NET SALARY (TAKE HOME)",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = Color(0xFFDCFCE7)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = "Verified",
-                                        modifier = Modifier.size(14.dp),
-                                        tint = Color(0xFF16A34A)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "Math Verified (±1 LKR)",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFF15803D),
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = CurrencyFormatter.formatLkr(record.netSalary),
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-
-                        if (record.salaryToBank > 0.0) {
-                            Text(
-                                text = "Direct Bank Transfer: ${CurrencyFormatter.formatLkr(record.salaryToBank)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
-                                modifier = Modifier.padding(top = 4.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Earnings & Allowances
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Column(modifier = Modifier.padding(18.dp)) {
-                        Text(
-                            text = "Earnings & Allowances",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        FinancialMetricRow(label = "Basic Salary", amount = record.basicSalary)
-                        FinancialMetricRow(label = "Vehicle Allowance", amount = record.vehicleAllowance)
-                        FinancialMetricRow(label = "Exceptional Incentive", amount = record.exceptionalIncentive)
-                        FinancialMetricRow(label = "Shift Compensation", amount = record.shiftCompensation)
-
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                        FinancialMetricRow(
-                            label = "Gross Salary (Total)",
-                            amount = record.grossSalary,
-                            isBold = true,
-                            colorOverride = Color(0xFF16A34A)
-                        )
-                    }
-                }
-            }
-
-            // Statutory Deductions
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Column(modifier = Modifier.padding(18.dp)) {
-                        Text(
-                            text = "Statutory & Other Deductions",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        FinancialMetricRow(label = "APIT (Advance Income Tax)", amount = record.apit)
-                        FinancialMetricRow(label = "EPF Employee (8%)", amount = record.epfEmployee)
-                        FinancialMetricRow(label = "Excess Mobile Phone Usage", amount = record.excessMobile)
-                        FinancialMetricRow(label = "Funeral Fund", amount = record.funeralFund)
-                        FinancialMetricRow(label = "Meals Deduction", amount = record.mealsDeduction)
-
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                        FinancialMetricRow(
-                            label = "Total Deductions",
-                            amount = record.totalDeductions,
-                            isBold = true,
-                            colorOverride = MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-            }
-
-            // Employer Statutory Contributions
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(18.dp)) {
-                        Text(
-                            text = "Employer Statutory Contributions (Not Deducted)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        FinancialMetricRow(label = "EPF Employer (12%)", amount = record.epfEmployer)
-                        FinancialMetricRow(label = "ETF Employer (3%)", amount = record.etfEmployer)
-                        if (record.stampDutyEmployer > 0.0) {
-                            FinancialMetricRow(label = "Stamp Duty Employer", amount = record.stampDutyEmployer)
-                        }
-
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                        FinancialMetricRow(
-                            label = "Total Statutory Benefit Contribution",
-                            amount = record.epfEmployer + record.etfEmployer + record.stampDutyEmployer,
-                            isBold = true
-                        )
-                    }
-                }
+                Text(
+                    text = "No payslip imported for $selectedMonthKey.\nGo to the Import tab to load a PDF salary slip.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         } else {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(32.dp),
-                        contentAlignment = Alignment.Center
+            val slip = salaryRecord!!
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                // Net Pay Hero
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                        shape = RoundedCornerShape(16.dp)
                     ) {
-                        Text(
-                            text = "No salary slip PDF has been imported for $selectedMonthKey yet.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "Net Take Home Pay",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                text = CurrencyFormatter.formatLkr(slip.netSalary),
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                            Text(
+                                text = "Gross (${CurrencyFormatter.formatLkr(slip.grossSalary)}) - Deductions (${CurrencyFormatter.formatLkr(slip.totalDeductions)})",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
                     }
+                }
+
+                // Earnings Section
+                item {
+                    BreakdownSectionCard(title = "Earnings & Allowances") {
+                        SalaryRowItem("Basic Salary", slip.basicSalary)
+                        SalaryRowItem("Vehicle Allowance", slip.vehicleAllowance)
+                        SalaryRowItem("Exceptional Incentive", slip.exceptionalIncentive)
+                        SalaryRowItem("Shift Compensation", slip.shiftCompensation)
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+                        SalaryRowItem("Gross Salary", slip.grossSalary, isBold = true, highlightColor = MaterialTheme.colorScheme.primary)
+                    }
+                }
+
+                // Deductions Section
+                item {
+                    BreakdownSectionCard(title = "Deductions & Statutory Contributions") {
+                        SalaryRowItem("APIT (Tax)", slip.apit)
+                        SalaryRowItem("EPF Employee (8%)", slip.epfEmployee)
+                        SalaryRowItem("Funeral Fund", slip.funeralFund)
+                        SalaryRowItem("Excess Mobile", slip.excessMobile)
+                        SalaryRowItem("Meals", slip.mealsDeduction)
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+                        SalaryRowItem("Total Deductions", slip.totalDeductions, isBold = true, highlightColor = MaterialTheme.colorScheme.error)
+                    }
+                }
+
+                // Employer Benefit Contributions
+                item {
+                    BreakdownSectionCard(title = "Employer Contributions (Benefits)") {
+                        SalaryRowItem("EPF Employer (12%)", slip.epfEmployer)
+                        SalaryRowItem("ETF Employer (3%)", slip.etfEmployer)
+                        val totalEmployer = slip.epfEmployer + slip.etfEmployer
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+                        SalaryRowItem("Total Employer Contribution", totalEmployer, isBold = true)
+                    }
+                }
+
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
                 }
             }
         }
+    }
+}
 
-        item {
-            Spacer(modifier = Modifier.height(24.dp))
+@Composable
+fun BreakdownSectionCard(
+    title: String,
+    content: @Composable () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            content()
         }
+    }
+}
+
+@Composable
+fun SalaryRowItem(
+    label: String,
+    amount: Double,
+    isBold: Boolean = false,
+    highlightColor: Color? = null
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = CurrencyFormatter.formatLkr(amount),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (isBold) FontWeight.Bold else FontWeight.Normal,
+            color = highlightColor ?: MaterialTheme.colorScheme.onSurface
+        )
     }
 }

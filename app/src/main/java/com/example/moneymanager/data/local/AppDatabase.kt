@@ -1,18 +1,18 @@
-package com.example.data.local
+package com.example.moneymanager.data.local
 
 import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
-import com.example.core.security.KeyManager
-import com.example.data.local.dao.BudgetMonthDao
-import com.example.data.local.dao.ExpenseLineDao
-import com.example.data.local.dao.MonthlySummaryDao
-import com.example.data.local.dao.SalaryRecordDao
-import com.example.data.local.entity.BudgetMonth
-import com.example.data.local.entity.ExpenseLine
-import com.example.data.local.entity.MonthlySummary
-import com.example.data.local.entity.SalaryRecord
+import com.example.moneymanager.core.security.KeyManager
+import com.example.moneymanager.data.local.dao.BudgetMonthDao
+import com.example.moneymanager.data.local.dao.ExpenseLineDao
+import com.example.moneymanager.data.local.dao.MonthlySummaryDao
+import com.example.moneymanager.data.local.dao.SalaryRecordDao
+import com.example.moneymanager.data.local.entity.BudgetMonth
+import com.example.moneymanager.data.local.entity.ExpenseLine
+import com.example.moneymanager.data.local.entity.MonthlySummary
+import com.example.moneymanager.data.local.entity.SalaryRecord
 import net.sqlcipher.database.SupportFactory
 
 @Database(

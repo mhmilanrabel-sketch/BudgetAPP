@@ -14,7 +14,7 @@ class HistoryViewModel(
     private val repository: MoneyManagerRepository
 ) : ViewModel() {
 
-    val months: StateFlow<List<BudgetMonth>> = repository.getAllMonths()
+    val allMonths: StateFlow<List<BudgetMonth>> = repository.getAllMonths()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun deleteMonth(monthKey: String) {
