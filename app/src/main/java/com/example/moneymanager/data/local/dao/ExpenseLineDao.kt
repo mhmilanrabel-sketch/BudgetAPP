@@ -1,31 +1,43 @@
-package com.example.moneymanager.data.local.dao
+package com.example.data.local.dao
 
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
-import androidx.room.Update
-import com.example.moneymanager.data.local.entity.ExpenseLine
+import com.example.data.local.entity.ExpenseLine
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ExpenseLineDao {
 
-    @Query("SELECT * FROM expense_lines WHERE monthKey = :monthKey ORDER BY isMandatory DESC, itemName ASC")
-    fun getExpensesForMonth(monthKey: String): Flow<List<ExpenseLine>>
-
-    @Query("SELECT * FROM expense_lines WHERE monthKey = :monthKey ORDER BY isMandatory DESC, itemName ASC")
-    suspend fun getExpensesForMonthSync(monthKey: String): List<ExpenseLine>
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(lines: List<ExpenseLine>)
 
-    @Update
-    suspend fun update(line: ExpenseLine)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(line: ExpenseLine): Long
 
-    @Query("DELETE FROM expense_lines WHERE monthKey = :monthKey")
-    suspend fun deleteForMonth(monthKey: String)
+    @Query("""
+        SELECT * FROM expense_lines
+        WHERE month = :month
+        ORDER BY isMandatory DESC, item ASC
+    """)
+    fun observeByMonth(month: String): Flow<List<ExpenseLine>>
 
-    @Query("UPDATE expense_lines SET isMandatory = :isMandatory, category = :category WHERE id = :id")
-    suspend fun updateCategory(id: Long, isMandatory: Boolean, category: String)
+    @Query("SELECT * FROM expense_lines WHERE month = :month")
+    suspend fun getByMonth(month: String): List<ExpenseLine>
+
+    @Query("SELECT * FROM expense_lines WHERE month = :month AND isMandatory = 1")
+    suspend fun getMandatoryByMonth(month: String): List<ExpenseLine>
+
+    @Query("SELECT * FROM expense_lines WHERE month = :month AND isMandatory = 0")
+    suspend fun getOptionalByMonth(month: String): List<ExpenseLine>
+
+    @Query("UPDATE expense_lines SET notPaid = :notPaid, realPay = :realPay WHERE id = :id")
+    suspend fun updatePayment(id: Long, notPaid: Double, realPay: Double)
+
+    @Query("DELETE FROM expense_lines WHERE month = :month")
+    suspend fun deleteByMonth(month: String)
+
+    @Query("DELETE FROM expense_lines")
+    suspend fun deleteAll()
 }
