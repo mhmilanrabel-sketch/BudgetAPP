@@ -1,0 +1,6 @@
+{
+  "name": "MoneyManager LK",
+  "description": "100% offline financial reconciliation and salary manager for Sri Lanka.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

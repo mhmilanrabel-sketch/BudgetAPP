@@ -1,0 +1,36 @@
+package com.example.moneymanager
+
+import android.app.Application
+import com.example.moneymanager.di.AppContainer
+import com.example.moneymanager.di.DefaultAppContainer
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+
+class MoneyManagerApplication : Application() {
+
+    lateinit var container: AppContainer
+        private set
+
+    override fun onCreate() {
+        super.onCreate()
+
+        // 1. Initialize Apache POI XML StAX Factories for Android compatibility
+        System.setProperty(
+            "org.apache.poi.javax.xml.stream.XMLInputFactory",
+            "com.fasterxml.aalto.stax.InputFactoryImpl"
+        )
+        System.setProperty(
+            "org.apache.poi.javax.xml.stream.XMLOutputFactory",
+            "com.fasterxml.aalto.stax.OutputFactoryImpl"
+        )
+        System.setProperty(
+            "org.apache.poi.javax.xml.stream.XMLEventFactory",
+            "com.fasterxml.aalto.stax.EventFactoryImpl"
+        )
+
+        // 2. Initialize PDFBox Android resource loader
+        PDFBoxResourceLoader.init(applicationContext)
+
+        // 3. Initialize Dependency Container
+        container = DefaultAppContainer(this)
+    }
+}
