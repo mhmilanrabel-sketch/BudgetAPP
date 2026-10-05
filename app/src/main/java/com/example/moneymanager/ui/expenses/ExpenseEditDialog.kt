@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
@@ -13,6 +14,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -39,19 +41,31 @@ fun ExpenseEditDialog(
 ) {
     var itemName by remember { mutableStateOf(existing?.itemName ?: "") }
     var amountText by remember {
-        mutableStateOf(existing?.realPayAmount?.takeIf { it > 0 }?.toString() ?: "")
+        mutableStateOf(existing?.budgetAmount?.takeIf { it > 0 }?.toString() ?: "")
     }
-    var notPaidText by remember {
-        mutableStateOf(existing?.notPaidAmount?.takeIf { it > 0 }?.toString() ?: "")
+    var paidText by remember {
+        mutableStateOf(existing?.realPayAmount?.takeIf { it > 0 }?.toString() ?: "")
     }
     var isFixed by remember { mutableStateOf(existing?.category == "Fixed") }
     var isMandatory by remember { mutableStateOf(existing?.isMandatory ?: true) }
+
+    var status by remember {
+        mutableStateOf(
+            when {
+                existing == null -> PaymentStatus.PAID
+                existing.notPaidAmount <= 0.0 -> PaymentStatus.PAID
+                existing.realPayAmount <= 0.0 -> PaymentStatus.NOT_PAID
+                else -> PaymentStatus.PARTIAL
+            }
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (existing == null) "Add expense" else "Edit expense") },
         text = {
             Column(Modifier.fillMaxWidth()) {
+
                 OutlinedTextField(
                     value = itemName,
                     onValueChange = { itemName = it },
@@ -59,29 +73,61 @@ fun ExpenseEditDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
                 Spacer(Modifier.height(8.dp))
+
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { s ->
                         amountText = s.filter { it.isDigit() || it == '.' }
                     },
-                    label = { Text("Amount (Rs.)") },
+                    label = { Text("Bill amount (Rs.)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = notPaidText,
-                    onValueChange = { s ->
-                        notPaidText = s.filter { it.isDigit() || it == '.' }
-                    },
-                    label = { Text("Not paid (optional)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+
+                Text(
+                    "Payment status",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(bottom = 4.dp)
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = status == PaymentStatus.PAID,
+                        onClick = { status = PaymentStatus.PAID },
+                        label = { Text("Paid") }
+                    )
+                    FilterChip(
+                        selected = status == PaymentStatus.PARTIAL,
+                        onClick = { status = PaymentStatus.PARTIAL },
+                        label = { Text("Partial") }
+                    )
+                    FilterChip(
+                        selected = status == PaymentStatus.NOT_PAID,
+                        onClick = { status = PaymentStatus.NOT_PAID },
+                        label = { Text("Not paid") }
+                    )
+                }
+
+                if (status == PaymentStatus.PARTIAL) {
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = paidText,
+                        onValueChange = { s ->
+                            paidText = s.filter { it.isDigit() || it == '.' }
+                        },
+                        label = { Text("Amount paid (Rs.)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
                 Spacer(Modifier.height(12.dp))
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Fixed", Modifier.width(70.dp))
                     Switch(checked = isFixed, onCheckedChange = { isFixed = it })
@@ -89,34 +135,26 @@ fun ExpenseEditDialog(
                     Text("Mandatory", Modifier.width(90.dp))
                     Switch(checked = isMandatory, onCheckedChange = { isMandatory = it })
                 }
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AssistChip(
-                        onClick = { isFixed = true; isMandatory = true },
-                        label = { Text("Fixed + Mandatory") },
-                        colors = AssistChipDefaults.assistChipColors()
-                    )
-                    AssistChip(
-                        onClick = { isFixed = false; isMandatory = false },
-                        label = { Text("Variable + Optional") },
-                        colors = AssistChipDefaults.assistChipColors()
-                    )
-                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    val amount = amountText.toDoubleOrNull() ?: 0.0
-                    val notPaid = notPaidText.toDoubleOrNull() ?: 0.0
+                    val bill = amountText.toDoubleOrNull() ?: 0.0
+                    val paid = when (status) {
+                        PaymentStatus.PAID -> bill
+                        PaymentStatus.NOT_PAID -> 0.0
+                        PaymentStatus.PARTIAL -> paidText.toDoubleOrNull() ?: 0.0
+                    }
+                    val notPaid = (bill - paid).coerceAtLeast(0.0)
                     if (itemName.isBlank()) return@Button
                     val saved = ExpenseLine(
                         id = existing?.id ?: 0,
                         monthKey = monthKey,
                         itemName = itemName.trim(),
-                        budgetAmount = amount,
+                        budgetAmount = bill,
                         notPaidAmount = notPaid,
-                        realPayAmount = amount - notPaid,
+                        realPayAmount = paid,
                         isMandatory = isMandatory,
                         category = if (isFixed) "Fixed" else "Variable"
                     )

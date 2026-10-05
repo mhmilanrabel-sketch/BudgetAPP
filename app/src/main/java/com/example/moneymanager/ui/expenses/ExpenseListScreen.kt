@@ -3,6 +3,7 @@ package com.example.moneymanager.ui.expenses
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -21,8 +23,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,6 +52,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -65,6 +70,7 @@ fun ExpenseListScreen(
     val selectedMonth by vm.selectedMonth.collectAsState()
     val allMonths by vm.allMonths.collectAsState()
     val templateCount by vm.templateCount.collectAsState()
+    val carryForward by vm.carryForward.collectAsState()
     val ctx = LocalContext.current
 
     var editing by remember { mutableStateOf<ExpenseLine?>(null) }
@@ -93,10 +99,7 @@ fun ExpenseListScreen(
                     ) {
                         DropdownMenuItem(
                             text = { Text("Save month as template") },
-                            onClick = {
-                                menuOpen = false
-                                showSaveTemplateDialog = true
-                            }
+                            onClick = { menuOpen = false; showSaveTemplateDialog = true }
                         )
                         DropdownMenuItem(
                             text = { Text("Clear template") },
@@ -120,17 +123,13 @@ fun ExpenseListScreen(
                             Toast.makeText(ctx, "Clipboard is empty", Toast.LENGTH_SHORT).show()
                         } else {
                             vm.pasteFromClipboard(text) { count ->
-                                Toast.makeText(
-                                    ctx,
+                                Toast.makeText(ctx,
                                     if (count == 0) "Nothing new to paste" else "Pasted $count items",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                                    Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
-                ) {
-                    Icon(Icons.Default.ContentPaste, contentDescription = "Paste")
-                }
+                ) { Icon(Icons.Default.ContentPaste, contentDescription = "Paste") }
                 Spacer(Modifier.height(12.dp))
                 ExtendedFloatingActionButton(
                     onClick = { showNewDialog = true },
@@ -165,12 +164,31 @@ fun ExpenseListScreen(
                 Spacer(Modifier.height(8.dp))
             }
 
+            // ── BRING FORWARD SECTION ──────────────────────────
+            if (carryForward.isNotEmpty()) {
+                item {
+                    CarryForwardCard(
+                        items = carryForward,
+                        onAddOne = { item ->
+                            vm.addCarryForwardItem(item) {
+                                Toast.makeText(ctx, "Added", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onAddAll = {
+                            vm.addAllCarryForward { count ->
+                                Toast.makeText(ctx, "Added $count items", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onDismiss = { vm.dismissCarryForward() }
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+            }
+
             if (state.mandatory.isEmpty() && state.optional.isEmpty()) {
                 item {
-                    Box(
-                        Modifier.fillMaxWidth().padding(48.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
+                    Box(Modifier.fillMaxWidth().padding(48.dp),
+                        contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
                                 "No expenses for ${monthLabel(selectedMonth)}",
@@ -197,41 +215,7 @@ fun ExpenseListScreen(
                 return@LazyColumn
             }
 
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    )
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Mandatory", style = MaterialTheme.typography.labelMedium)
-                            Text(formatRs(state.mandatoryTotal), fontWeight = FontWeight.SemiBold)
-                        }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Optional", style = MaterialTheme.typography.labelMedium)
-                            Text(formatRs(state.optionalTotal), fontWeight = FontWeight.SemiBold)
-                        }
-                        if (state.notPaidTotal > 0) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Not Paid", style = MaterialTheme.typography.labelMedium)
-                                Text(formatRs(state.notPaidTotal), fontWeight = FontWeight.SemiBold)
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("Total", fontWeight = FontWeight.Bold)
-                            Text(
-                                formatRs(state.grandTotal),
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                        }
-                    }
-                }
-            }
+            item { TotalsCard(state) }
 
             if (state.mandatory.isNotEmpty()) {
                 item {
@@ -262,10 +246,7 @@ fun ExpenseListScreen(
             existing = null,
             monthKey = selectedMonth,
             onDismiss = { showNewDialog = false },
-            onSave = {
-                vm.addOrUpdate(it)
-                showNewDialog = false
-            }
+            onSave = { vm.addOrUpdate(it); showNewDialog = false }
         )
     }
 
@@ -274,14 +255,8 @@ fun ExpenseListScreen(
             existing = current,
             monthKey = selectedMonth,
             onDismiss = { editing = null },
-            onSave = {
-                vm.addOrUpdate(it)
-                editing = null
-            },
-            onDelete = {
-                vm.delete(it)
-                editing = null
-            }
+            onSave = { vm.addOrUpdate(it); editing = null },
+            onDelete = { vm.delete(it); editing = null }
         )
     }
 
@@ -294,28 +269,123 @@ fun ExpenseListScreen(
                 Text(
                     "Copy all $count items from ${monthLabel(selectedMonth)} " +
                     "into the master template?\n\n" +
-                    "Every new month will auto-fill from this template. " +
-                    "Existing months are not affected."
+                    "Every new month will auto-fill from this template."
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     vm.saveCurrentAsTemplate { savedCount ->
-                        Toast.makeText(
-                            ctx,
+                        Toast.makeText(ctx,
                             "Template saved ($savedCount items)",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                            Toast.LENGTH_SHORT).show()
                     }
                     showSaveTemplateDialog = false
                 }) { Text("Save template") }
             },
             dismissButton = {
-                TextButton(onClick = { showSaveTemplateDialog = false }) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = { showSaveTemplateDialog = false }) { Text("Cancel") }
             }
         )
+    }
+}
+
+// ── Carry forward card ─────────────────────────────────────────
+@Composable
+private fun CarryForwardCard(
+    items: List<CarryForwardItem>,
+    onAddOne: (CarryForwardItem) -> Unit,
+    onAddAll: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val total = items.sumOf { it.unpaidAmount }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+        )
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.KeyboardArrowUp,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Bring Forward",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "Unpaid from ${monthLabel(items.first().fromMonth)} " +
+                        "— Rs. ${"%,.2f".format(total)}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                TextButton(onClick = onDismiss) { Text("Dismiss") }
+            }
+            Spacer(Modifier.height(8.dp))
+            items.forEach { item ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(item.itemName, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Rs. ${"%,.2f".format(item.unpaidAmount)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    TextButton(onClick = { onAddOne(item) }) { Text("Add") }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Button(onClick = onAddAll, modifier = Modifier.fillMaxWidth()) {
+                Text("Add all to ${monthLabel(items.first().fromMonth.let { "current" })} month")
+            }
+        }
+    }
+}
+
+@Composable
+private fun TotalsCard(state: ExpensesState) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Bill Total", style = MaterialTheme.typography.labelMedium)
+                Text(formatRs(state.grandTotal), fontWeight = FontWeight.SemiBold)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Paid", style = MaterialTheme.typography.labelMedium)
+                Text(formatRs(state.paidTotal), fontWeight = FontWeight.SemiBold,
+                     color = Color(0xFF388E3C))
+            }
+            if (state.notPaidTotal > 0) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Remaining", style = MaterialTheme.typography.labelMedium)
+                    Text(formatRs(state.notPaidTotal), fontWeight = FontWeight.Bold,
+                         color = MaterialTheme.colorScheme.error)
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Mandatory: ${formatRs(state.mandatoryTotal)} · " +
+                "Optional: ${formatRs(state.optionalTotal)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -331,41 +401,77 @@ private fun SectionHeader(text: String) {
 
 @Composable
 private fun ExpenseRow(line: ExpenseLine, onClick: (ExpenseLine) -> Unit) {
+    val isCarried = line.category == ExpensesViewModel.CARRIED_CATEGORY_TAG
+    val statusColor = when {
+        line.notPaidAmount <= 0.0 -> Color(0xFF388E3C)         // Paid — green
+        line.realPayAmount <= 0.0 -> Color(0xFFD32F2F)         // Not paid — red
+        else                      -> Color(0xFFF57C00)         // Partial — orange
+    }
+    val statusText = when {
+        line.notPaidAmount <= 0.0 -> "Paid"
+        line.realPayAmount <= 0.0 -> "Not paid"
+        else                      -> "Partial"
+    }
+
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick(line) },
-        shape = RoundedCornerShape(10.dp)
+        modifier = Modifier.fillMaxWidth().clickable { onClick(line) },
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isCarried)
+                MaterialTheme.colorScheme.tertiaryContainer
+            else MaterialTheme.colorScheme.surface
+        )
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    line.itemName,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    line.category,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    formatRs(line.realPayAmount),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                if (line.notPaidAmount > 0) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
                     Text(
-                        "Not paid: ${formatRs(line.notPaidAmount)}",
+                        line.itemName,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Row {
+                        Text(
+                            line.category,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier
+                                .background(statusColor, RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                statusText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        formatRs(line.budgetAmount),
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "Paid: ${formatRs(line.realPayAmount)}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
+            if (line.notPaidAmount > 0) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Remaining: ${formatRs(line.notPaidAmount)}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
     }
