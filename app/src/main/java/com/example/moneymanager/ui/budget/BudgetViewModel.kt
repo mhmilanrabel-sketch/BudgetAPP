@@ -42,10 +42,26 @@ data class BudgetState(
     val totalLimit: Double = 0.0,
     val totalSpent: Double = 0.0,
     val totalPaid: Double = 0.0,
+    /** From salary slip PDF for this month. 0 if not imported yet. */
+    val netSalary: Double = 0.0,
     val loading: Boolean = true
-)
+) {
+    val salaryMinusBudget: Double get() = netSalary - totalLimit
+
+    val allocatedPercent: Int
+        get() = if (netSalary <= 0) 0
+                else ((totalLimit / netSalary) * 100).toInt()
+
+    val unallocated: Double get() = (netSalary - totalLimit).coerceAtLeast(0.0)
+    val overAllocated: Double get() = (totalLimit - netSalary).coerceAtLeast(0.0)
+    val hasSalary: Boolean get() = netSalary > 0.0
+}
 
 class BudgetViewModel(app: Application) : AndroidViewModel(app) {
+
+    companion object {
+        const val TEMPLATE_MONTH = "__TEMPLATE__"
+    }
 
     private val db = AppDatabase.getInstance(app)
 
@@ -68,11 +84,30 @@ class BudgetViewModel(app: Application) : AndroidViewModel(app) {
     val editingExpense: StateFlow<ExpenseLine?> = _editingExpense.asStateFlow()
 
     @OptIn(ExperimentalCoroutinesApi::class)
+    val availableItems: StateFlow<List<String>> = _selectedMonth.flatMapLatest { month ->
+        combine(
+            db.expenseLineDao().getExpensesForMonth(TEMPLATE_MONTH),
+            db.expenseLineDao().getExpensesForMonth(month)
+        ) { template, monthItems ->
+            (template.map { it.itemName } + monthItems.map { it.itemName })
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .distinctBy { it.lowercase() }
+                .sortedBy { it.lowercase() }
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList()
+    )
+
+    @OptIn(ExperimentalCoroutinesApi::class)
     val state: StateFlow<BudgetState> = _selectedMonth.flatMapLatest { month ->
         combine(
             db.budgetCategoryDao().getAll(),
-            db.expenseLineDao().getExpensesForMonth(month)
-        ) { categories, expenses ->
+            db.expenseLineDao().getExpensesForMonth(month),
+            db.salaryRecordDao().getByMonth(month)
+        ) { categories, expenses, salary ->
             val progresses = categories.map { cat ->
                 val matched = expenses.filter { matches(cat, it) }
                 CategoryProgress(
@@ -88,6 +123,7 @@ class BudgetViewModel(app: Application) : AndroidViewModel(app) {
                 totalLimit = progresses.sumOf { it.category.monthlyLimit },
                 totalSpent = progresses.sumOf { it.spent },
                 totalPaid = progresses.sumOf { it.paid },
+                netSalary = salary?.netSalary ?: 0.0,
                 loading = false
             )
         }
@@ -132,14 +168,14 @@ class BudgetViewModel(app: Application) : AndroidViewModel(app) {
         _dialogOpen.value = false
     }
 
-    fun saveCategory(name: String, limit: Double, keywords: String, colorHex: String) {
+    fun saveCategory(name: String, limit: Double, itemNames: List<String>, colorHex: String) {
         viewModelScope.launch {
             val existing = _editing.value
             db.budgetCategoryDao().upsert(
                 BudgetCategory(
                     id = existing?.id ?: 0,
                     name = name.trim(),
-                    keywordsCsv = keywords.trim(),
+                    keywordsCsv = itemNames.joinToString(","),
                     monthlyLimit = limit,
                     colorHex = colorHex
                 )
@@ -157,11 +193,11 @@ class BudgetViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun matches(cat: BudgetCategory, line: ExpenseLine): Boolean {
-        val keywords = cat.keywordsCsv.split(',')
+        val mapped = cat.keywordsCsv.split(',')
             .map { it.trim().lowercase() }
             .filter { it.isNotBlank() }
-        if (keywords.isEmpty()) return false
-        val name = line.itemName.lowercase()
-        return keywords.any { name.contains(it) }
+            .toSet()
+        if (mapped.isEmpty()) return false
+        return mapped.contains(line.itemName.trim().lowercase())
     }
 }

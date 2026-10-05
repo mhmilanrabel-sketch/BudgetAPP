@@ -58,6 +58,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.moneymanager.data.local.entity.ExpenseLine
+import com.example.moneymanager.ui.components.AmountText
+import com.example.moneymanager.ui.components.PrivacyToggle
 import com.example.moneymanager.ui.dashboard.monthLabel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -90,6 +92,7 @@ fun ExpenseListScreen(
             TopAppBar(
                 title = { Text("Expenses") },
                 actions = {
+                    PrivacyToggle()
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = "Menu")
                     }
@@ -123,9 +126,11 @@ fun ExpenseListScreen(
                             Toast.makeText(ctx, "Clipboard is empty", Toast.LENGTH_SHORT).show()
                         } else {
                             vm.pasteFromClipboard(text) { count ->
-                                Toast.makeText(ctx,
+                                Toast.makeText(
+                                    ctx,
                                     if (count == 0) "Nothing new to paste" else "Pasted $count items",
-                                    Toast.LENGTH_SHORT).show()
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             }
                         }
                     }
@@ -164,7 +169,6 @@ fun ExpenseListScreen(
                 Spacer(Modifier.height(8.dp))
             }
 
-            // ── BRING FORWARD SECTION ──────────────────────────
             if (carryForward.isNotEmpty()) {
                 item {
                     CarryForwardCard(
@@ -197,8 +201,7 @@ fun ExpenseListScreen(
                             Spacer(Modifier.height(8.dp))
                             if (templateCount == 0) {
                                 Text(
-                                    "Tip: tap ⋮ → Save month as template " +
-                                    "so future months auto-fill",
+                                    "Tip: tap ⋮ → Save month as template",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -275,21 +278,24 @@ fun ExpenseListScreen(
             confirmButton = {
                 TextButton(onClick = {
                     vm.saveCurrentAsTemplate { savedCount ->
-                        Toast.makeText(ctx,
+                        Toast.makeText(
+                            ctx,
                             "Template saved ($savedCount items)",
-                            Toast.LENGTH_SHORT).show()
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                     showSaveTemplateDialog = false
                 }) { Text("Save template") }
             },
             dismissButton = {
-                TextButton(onClick = { showSaveTemplateDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showSaveTemplateDialog = false }) {
+                    Text("Cancel")
+                }
             }
         )
     }
 }
 
-// ── Carry forward card ─────────────────────────────────────────
 @Composable
 private fun CarryForwardCard(
     items: List<CarryForwardItem>,
@@ -319,11 +325,13 @@ private fun CarryForwardCard(
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold
                     )
-                    Text(
-                        "Unpaid from ${monthLabel(items.first().fromMonth)} " +
-                        "— Rs. ${"%,.2f".format(total)}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Unpaid from ${monthLabel(items.first().fromMonth)} — ",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        AmountText(total, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
                 TextButton(onClick = onDismiss) { Text("Dismiss") }
             }
@@ -335,8 +343,8 @@ private fun CarryForwardCard(
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(item.itemName, style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "Rs. ${"%,.2f".format(item.unpaidAmount)}",
+                        AmountText(
+                            amount = item.unpaidAmount,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -346,7 +354,7 @@ private fun CarryForwardCard(
             }
             Spacer(Modifier.height(4.dp))
             Button(onClick = onAddAll, modifier = Modifier.fillMaxWidth()) {
-                Text("Add all to ${monthLabel(items.first().fromMonth.let { "current" })} month")
+                Text("Add all to current month")
             }
         }
     }
@@ -364,27 +372,37 @@ private fun TotalsCard(state: ExpensesState) {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Bill Total", style = MaterialTheme.typography.labelMedium)
-                Text(formatRs(state.grandTotal), fontWeight = FontWeight.SemiBold)
+                AmountText(state.grandTotal, fontWeight = FontWeight.SemiBold)
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Paid", style = MaterialTheme.typography.labelMedium)
-                Text(formatRs(state.paidTotal), fontWeight = FontWeight.SemiBold,
-                     color = Color(0xFF388E3C))
+                AmountText(state.paidTotal, fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF388E3C))
             }
             if (state.notPaidTotal > 0) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Remaining", style = MaterialTheme.typography.labelMedium)
-                    Text(formatRs(state.notPaidTotal), fontWeight = FontWeight.Bold,
-                         color = MaterialTheme.colorScheme.error)
+                    AmountText(state.notPaidTotal, fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error)
                 }
             }
             Spacer(Modifier.height(6.dp))
-            Text(
-                "Mandatory: ${formatRs(state.mandatoryTotal)} · " +
-                "Optional: ${formatRs(state.optionalTotal)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Mandatory: ", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    AmountText(state.mandatoryTotal,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Optional: ", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    AmountText(state.optionalTotal,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
     }
 }
@@ -403,23 +421,22 @@ private fun SectionHeader(text: String) {
 private fun ExpenseRow(line: ExpenseLine, onClick: (ExpenseLine) -> Unit) {
     val isCarried = line.category == ExpensesViewModel.CARRIED_CATEGORY_TAG
     val statusColor = when {
-        line.notPaidAmount <= 0.0 -> Color(0xFF388E3C)         // Paid — green
-        line.realPayAmount <= 0.0 -> Color(0xFFD32F2F)         // Not paid — red
-        else                      -> Color(0xFFF57C00)         // Partial — orange
+        line.notPaidAmount <= 0.0 -> Color(0xFF388E3C)
+        line.realPayAmount <= 0.0 -> Color(0xFFD32F2F)
+        else -> Color(0xFFF57C00)
     }
     val statusText = when {
         line.notPaidAmount <= 0.0 -> "Paid"
         line.realPayAmount <= 0.0 -> "Not paid"
-        else                      -> "Partial"
+        else -> "Partial"
     }
 
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick(line) },
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isCarried)
-                MaterialTheme.colorScheme.tertiaryContainer
-            else MaterialTheme.colorScheme.surface
+            containerColor = if (isCarried) MaterialTheme.colorScheme.tertiaryContainer
+                             else MaterialTheme.colorScheme.surface
         )
     ) {
         Column(Modifier.padding(12.dp)) {
@@ -452,29 +469,35 @@ private fun ExpenseRow(line: ExpenseLine, onClick: (ExpenseLine) -> Unit) {
                     }
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        formatRs(line.budgetAmount),
+                    AmountText(
+                        amount = line.budgetAmount,
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.SemiBold
                     )
-                    Text(
-                        "Paid: ${formatRs(line.realPayAmount)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Paid: ", style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        AmountText(line.realPayAmount,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
             if (line.notPaidAmount > 0) {
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    "Remaining: ${formatRs(line.notPaidAmount)}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.error,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Remaining: ",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold)
+                    AmountText(
+                        amount = line.notPaidAmount,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
         }
     }
 }
-
-private fun formatRs(amount: Double): String = "Rs. " + "%,.2f".format(amount)
