@@ -1,53 +1,49 @@
 package com.example.moneymanager.core.security
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
+import android.util.Base64
 import android.util.Log
-import java.security.KeyStore
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+import java.security.SecureRandom
 
 /**
- * Manages the hardware-backed AES-256 key used by SQLCipher to encrypt the Room DB.
- * The raw key never leaves the Android Keystore; only a byte copy is returned when needed.
+ * Manages the SQLCipher database passphrase.
+ *
+ * On modern Android (API 28+), Keystore keys are non-exportable — `getEncoded()`
+ * returns null. So we use a different pattern: generate a random 32-byte
+ * passphrase once, encrypt it with a Keystore-backed MasterKey via
+ * EncryptedSharedPreferences, and retrieve it whenever SQLCipher needs it.
  */
 object KeyManager {
 
     private const val TAG = "KeyManager"
-    private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-    private const val KEY_ALIAS = "moneymanager_lk_db_key"
+    private const val PREFS_NAME = "money_manager_secure_prefs"
+    private const val KEY_PASSPHRASE = "db_passphrase"
 
     fun getOrCreateDatabasePassphrase(context: Context): ByteArray {
-        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        if (!keyStore.containsAlias(KEY_ALIAS)) generateKey()
-        val secretKey = keyStore.getKey(KEY_ALIAS, null) as? SecretKey
-            ?: throw IllegalStateException("DB key missing from Keystore")
-        return secretKey.encoded
-    }
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
 
-    private fun generateKey() {
-        try {
-            val kg = KeyGenerator.getInstance(
-                KeyProperties.KEY_ALGORITHM_AES,
-                ANDROID_KEYSTORE
-            )
-            kg.init(
-                KeyGenParameterSpec.Builder(
-                    KEY_ALIAS,
-                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-                )
-                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                    .setKeySize(256)
-                    .setUserAuthenticationRequired(false)
-                    .build()
-            )
-            kg.generateKey()
-            Log.i(TAG, "Generated AES-256 DB key.")
-        } catch (t: Throwable) {
-            Log.e(TAG, "Failed to generate DB key", t)
-            throw IllegalStateException("Could not create DB encryption key", t)
+        val prefs = EncryptedSharedPreferences.create(
+            context,
+            PREFS_NAME,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+
+        val existing = prefs.getString(KEY_PASSPHRASE, null)
+        if (existing != null) {
+            return existing.toByteArray(Charsets.UTF_8)
         }
+
+        // First run: generate a fresh 32-byte random passphrase.
+        val random = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val passphrase = Base64.encodeToString(random, Base64.NO_WRAP)
+        prefs.edit().putString(KEY_PASSPHRASE, passphrase).apply()
+        Log.i(TAG, "Generated and stored new DB passphrase.")
+        return passphrase.toByteArray(Charsets.UTF_8)
     }
 }
