@@ -82,7 +82,9 @@ private fun NavShell() {
                 "imports"   -> ImportScreen(
                     onImported = { current = "expenses" }
                 )
-                "budget"    -> com.example.moneymanager.ui.budget.BudgetScreen()
+                "budget"    -> com.example.moneymanager.ui.budget.BudgetScreen(
+                    onOpenExpenses = { current = "expenses" }
+                )
                 "receipt"   -> CenterText("Scan receipt")
             }
         }
